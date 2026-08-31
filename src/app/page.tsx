@@ -3,6 +3,7 @@
 import Link from "next/link";
 
 import { useWebMcpStatus } from "@/components/webmcp/webmcp-provider";
+import { analyzeRelease } from "@/lib/decision/engine";
 import { RELEASES } from "@/lib/releases/fixtures";
 import { webMcpToolCatalog } from "@/lib/webmcp/register-tools";
 
@@ -18,6 +19,15 @@ const decisionStyles = {
   CONDITIONAL_GO: "bg-amber-50 text-amber-800 ring-amber-600/20",
   NO_GO: "bg-rose-50 text-rose-700 ring-rose-600/20",
 } as const;
+
+const releasesWithAnalysis = RELEASES.map((release) => {
+  const analysis = analyzeRelease(release.id);
+
+  return {
+    release,
+    analysis: analysis.ok ? analysis.data : null,
+  };
+});
 
 const riskStyles = {
   LOW: "bg-slate-100 text-slate-700 ring-slate-600/20",
@@ -82,16 +92,20 @@ export default function Home() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {RELEASES.map((release) => (
+                  {releasesWithAnalysis.map(({ analysis, release }) => (
                     <tr key={release.id}>
                       <td className="px-6 py-4">
                         <div className="font-semibold">{release.version}</div>
                         <div className="text-xs text-slate-500">{release.name}</div>
                       </td>
                       <td className="px-6 py-4">
-                        <Badge className={decisionStyles[release.decision]}>
-                          {release.decision}
-                        </Badge>
+                        {analysis ? (
+                          <Badge className={decisionStyles[analysis.decision]}>
+                            {analysis.decision}
+                          </Badge>
+                        ) : (
+                          <span className="text-sm text-slate-500">Unavailable</span>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         <Badge className={riskStyles[release.risk]}>

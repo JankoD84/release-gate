@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON src/lib/releases/fixtures.test.mts"
+    "test": "node --test --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON src/lib/releases/fixtures.test.mts src/lib/decision/engine.test.mts"
   },
   "dependencies": {
     "next": "16.3.3",

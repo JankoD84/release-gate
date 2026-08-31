@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
+import { analyzeRelease } from "@/lib/decision/engine";
+import type { DecisionAnalysis, DecisionEvidenceItem } from "@/lib/decision/types";
 import { getReleaseRecordById } from "@/lib/releases/fixtures";
 import type { ReleaseRecord } from "@/lib/releases/types";
 
@@ -45,6 +47,37 @@ function Stat({ label, value }: { label: string; value: string | number }) {
   );
 }
 
+function EvidenceList({ items }: { items: readonly DecisionEvidenceItem[] }) {
+  if (items.length === 0) {
+    return <p className="text-sm text-slate-500">None</p>;
+  }
+
+  return (
+    <ul className="space-y-2 text-sm leading-6 text-slate-600">
+      {items.map((item) => (
+        <li key={item.code}>
+          <span className="font-semibold text-slate-800">{item.category}:</span>{" "}
+          {item.message}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ConditionsList({ conditions }: { conditions: readonly string[] }) {
+  if (conditions.length === 0) {
+    return <p className="text-sm text-slate-500">None</p>;
+  }
+
+  return (
+    <ul className="list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
+      {conditions.map((condition) => (
+        <li key={condition}>{condition}</li>
+      ))}
+    </ul>
+  );
+}
+
 function EvidenceSection({
   children,
   title,
@@ -60,7 +93,13 @@ function EvidenceSection({
   );
 }
 
-function ReleaseDetail({ release }: { release: ReleaseRecord }) {
+function ReleaseDetail({
+  analysis,
+  release,
+}: {
+  analysis: DecisionAnalysis;
+  release: ReleaseRecord;
+}) {
   const { evidence } = release;
 
   return (
@@ -100,13 +139,45 @@ function ReleaseDetail({ release }: { release: ReleaseRecord }) {
               </dl>
             </div>
             <div className="flex flex-wrap gap-3 rounded-2xl border border-white/10 bg-slate-900/80 p-4">
-              <Badge className={decisionStyles[release.decision]}>
-                {release.decision}
+              <Badge className={decisionStyles[analysis.decision]}>
+                {analysis.decision}
               </Badge>
               <Badge className={riskStyles[release.risk]}>{release.risk}</Badge>
             </div>
           </div>
         </header>
+
+        <EvidenceSection title="Decision Analysis">
+          <div className="mb-5 flex flex-wrap gap-3">
+            <Badge className={decisionStyles[analysis.decision]}>
+              {analysis.decision}
+            </Badge>
+            <Badge className={riskStyles[analysis.confidence]}>
+              {analysis.confidence}
+            </Badge>
+          </div>
+          <p className="text-sm leading-6 text-slate-600">{analysis.summary}</p>
+          <div className="mt-6 grid gap-5 lg:grid-cols-3">
+            <div>
+              <h3 className="font-semibold">Blocking evidence</h3>
+              <div className="mt-3">
+                <EvidenceList items={analysis.blockingEvidence} />
+              </div>
+            </div>
+            <div>
+              <h3 className="font-semibold">Warnings</h3>
+              <div className="mt-3">
+                <EvidenceList items={analysis.warnings} />
+              </div>
+            </div>
+            <div>
+              <h3 className="font-semibold">Conditions</h3>
+              <div className="mt-3">
+                <ConditionsList conditions={analysis.conditions} />
+              </div>
+            </div>
+          </div>
+        </EvidenceSection>
 
         <EvidenceSection title="CI">
           <div className="mb-5">
@@ -199,6 +270,7 @@ function ReleaseDetail({ release }: { release: ReleaseRecord }) {
 export default function ReleaseDetailPage() {
   const params = useParams<{ releaseId: string }>();
   const releaseResult = getReleaseRecordById(params.releaseId);
+  const analysisResult = analyzeRelease(params.releaseId);
 
   if (!releaseResult.ok) {
     return (
@@ -224,5 +296,29 @@ export default function ReleaseDetailPage() {
     );
   }
 
-  return <ReleaseDetail release={releaseResult.data} />;
+  if (!analysisResult.ok) {
+    return (
+      <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100 sm:px-10">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+          <Link
+            className="w-fit font-semibold text-cyan-200 underline-offset-4 hover:underline"
+            href="/"
+          >
+            ← Back to releases
+          </Link>
+          <section className="rounded-3xl border border-rose-400/30 bg-rose-950/30 p-8">
+            <p className="text-sm font-semibold uppercase tracking-[0.24em] text-rose-200">
+              {analysisResult.error.code}
+            </p>
+            <h1 className="mt-3 text-3xl font-semibold text-white">
+              Release analysis unavailable
+            </h1>
+            <p className="mt-4 text-slate-300">{analysisResult.error.message}</p>
+          </section>
+        </div>
+      </main>
+    );
+  }
+
+  return <ReleaseDetail analysis={analysisResult.data} release={releaseResult.data} />;
 }

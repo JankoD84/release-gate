@@ -1,3 +1,5 @@
+import { analyzeRelease } from "@/lib/decision/engine";
+import type { DecisionAnalysis, ReleaseDecision } from "@/lib/decision/types";
 import {
   getChangeRiskEvidenceByReleaseId,
   getCiEvidenceByReleaseId,
@@ -19,13 +21,25 @@ import type { WebMcpRegistrationResult, WebMcpToolContract } from "./types";
 
 const REGISTRATION_KEY = "__webMcpReleaseGateWebMcpRegistration__";
 
+type ReleaseWithDecision = Release & {
+  decision: ReleaseDecision;
+};
+
 type ListReleasesResult = {
-  releases: readonly Release[];
+  releases: readonly ReleaseWithDecision[];
 };
 
 type ReleaseIdInput = {
   releaseId: string;
 };
+
+type AnalysisToolResult =
+  | {
+      analysis: DecisionAnalysis;
+    }
+  | {
+      error: ReleaseNotFoundError;
+    };
 
 type ToolLookupResult<T> =
   | {
@@ -38,7 +52,7 @@ type ToolLookupResult<T> =
 
 type GetReleaseToolResult =
   | {
-      release: Release;
+      release: ReleaseWithDecision;
     }
   | {
       error: ReleaseNotFoundError;
@@ -127,6 +141,15 @@ export const webMcpToolCatalog = [
       readOnlyHint: true,
     },
   },
+  {
+    name: "analyze_release",
+    description:
+      "Analyze software release evidence and return a deterministic GO, CONDITIONAL GO, or NO GO recommendation with blockers, warnings, and conditions.",
+    inputSchema: releaseIdInputSchema,
+    annotations: {
+      readOnlyHint: true,
+    },
+  },
 ] as const satisfies readonly WebMcpToolContract[];
 
 export const listReleasesToolContract = webMcpToolCatalog[0];
@@ -174,13 +197,38 @@ function mapReleaseLookupResult<T>(
       };
 }
 
+function getReleaseDecision(releaseId: string): ReleaseDecision {
+  const analysis = analyzeRelease(releaseId);
+
+  return analysis.ok ? analysis.data.decision : "NO_GO";
+}
+
+function createReleaseWithDecision(release: Release): ReleaseWithDecision {
+  return {
+    ...release,
+    decision: getReleaseDecision(release.id),
+  };
+}
+
 function mapGetReleaseResult(result: ReleaseLookupResult<Release>): GetReleaseToolResult {
   return result.ok
     ? {
-        release: result.data,
+        release: createReleaseWithDecision(result.data),
       }
     : {
         error: result.error,
+      };
+}
+
+function mapAnalysisResult(releaseId: string): AnalysisToolResult {
+  const analysis = analyzeRelease(releaseId);
+
+  return analysis.ok
+    ? {
+        analysis: analysis.data,
+      }
+    : {
+        error: analysis.error,
       };
 }
 
@@ -192,13 +240,14 @@ function createWebMcpTools(): WebMCP.ModelContextTool[] {
     getTestResultsTool,
     getSecurityFindingsTool,
     getChangeRiskTool,
+    analyzeReleaseTool,
   ] = webMcpToolCatalog;
 
   return [
     {
       ...listReleasesTool,
       execute: (): ListReleasesResult => ({
-        releases: RELEASES,
+        releases: RELEASES.map(createReleaseWithDecision),
       }),
     },
     {
@@ -248,6 +297,14 @@ function createWebMcpTools(): WebMCP.ModelContextTool[] {
           releaseId,
           getChangeRiskEvidenceByReleaseId(releaseId),
         );
+      },
+    },
+    {
+      ...analyzeReleaseTool,
+      execute: (input: unknown): AnalysisToolResult => {
+        const { releaseId } = normalizeReleaseIdInput(input);
+
+        return mapAnalysisResult(releaseId);
       },
     },
   ];

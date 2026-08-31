@@ -30,7 +30,6 @@ test("release-240 represents healthy evidence", () => {
   const release = getReleaseRecordById("release-240");
 
   assert.equal(release.ok, true);
-  assert.equal(release.data.decision, "GO");
   assert.equal(release.data.risk, "LOW");
   assert.equal(release.data.evidence.ci.status, "PASS");
   assert.equal(release.data.evidence.tests.status, "PASS");

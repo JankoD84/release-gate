@@ -1,5 +1,3 @@
-export type ReleaseDecision = "GO" | "CONDITIONAL_GO" | "NO_GO";
-
 export type ReleaseRisk = "LOW" | "MEDIUM" | "HIGH";
 
 export type CiStatus = "PASS" | "FAIL";
@@ -14,7 +12,6 @@ export type Release = {
   id: string;
   version: string;
   name: string;
-  decision: ReleaseDecision;
   risk: ReleaseRisk;
   updatedAt: string;
   branch: string;
