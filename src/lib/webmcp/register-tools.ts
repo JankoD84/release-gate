@@ -1,16 +1,16 @@
-import { analyzeRelease } from "@/lib/decision/engine";
-import type { DecisionAnalysis, ReleaseDecision } from "@/lib/decision/types";
-import { addActivity, getActivityLog } from "@/lib/decisions/activity-store";
-import type { ActivityLogResult } from "@/lib/decisions/activity-types";
+import { analyzeRelease } from "../decision/engine.ts";
+import type { DecisionAnalysis, ReleaseDecision } from "../decision/types.ts";
+import { getActivityLog } from "../decisions/activity-store.ts";
+import type { ActivityLogResult } from "../decisions/activity-types.ts";
 import {
   approveRelease,
   getFinalDecision,
   rejectRelease,
-} from "@/lib/decisions/final-decision-store";
+} from "../decisions/final-decision-store.ts";
 import type {
   FinalDecisionMutationResult,
   FinalDecisionState,
-} from "@/lib/decisions/final-decision-types";
+} from "../decisions/final-decision-types.ts";
 import {
   getChangeRiskEvidenceByReleaseId,
   getCiEvidenceByReleaseId,
@@ -18,7 +18,7 @@ import {
   getSecurityEvidenceByReleaseId,
   getTestEvidenceByReleaseId,
   RELEASES,
-} from "@/lib/releases/fixtures";
+} from "../releases/fixtures.ts";
 import type {
   ChangeRiskEvidence,
   CiEvidence,
@@ -27,7 +27,7 @@ import type {
   ReleaseNotFoundError,
   SecurityEvidence,
   TestEvidence,
-} from "@/lib/releases/types";
+} from "../releases/types.ts";
 import type { WebMcpRegistrationResult, WebMcpToolContract } from "./types";
 
 const REGISTRATION_KEY = "__webMcpReleaseGateWebMcpRegistration__";
@@ -152,7 +152,7 @@ export const webMcpToolCatalog = [
   {
     name: "list_releases",
     description:
-      "List available software releases with their current release decision and risk level.",
+      "Use to discover available releases before selecting a releaseId; returns release metadata with deterministic system recommendation and risk level.",
     inputSchema: emptyInputSchema,
     annotations: {
       readOnlyHint: true,
@@ -161,7 +161,7 @@ export const webMcpToolCatalog = [
   {
     name: "get_release",
     description:
-      "Get metadata and current release decision for a specific software release.",
+      "Use to inspect metadata for one releaseId; returns the deterministic system recommendation but not a human final decision.",
     inputSchema: releaseIdInputSchema,
     annotations: {
       readOnlyHint: true,
@@ -170,7 +170,7 @@ export const webMcpToolCatalog = [
   {
     name: "get_ci_status",
     description:
-      "Get continuous integration status and job results for a specific software release.",
+      "Use to inspect CI evidence for one releaseId, including pass/fail status and job counts.",
     inputSchema: releaseIdInputSchema,
     annotations: {
       readOnlyHint: true,
@@ -179,7 +179,7 @@ export const webMcpToolCatalog = [
   {
     name: "get_test_results",
     description:
-      "Get automated test results, flaky tests, and coverage for a specific software release.",
+      "Use to inspect automated test evidence for one releaseId, including failed and flaky tests.",
     inputSchema: releaseIdInputSchema,
     annotations: {
       readOnlyHint: true,
@@ -188,7 +188,7 @@ export const webMcpToolCatalog = [
   {
     name: "get_security_findings",
     description:
-      "Get security finding counts and security gate status for a specific software release.",
+      "Use to inspect security evidence for one releaseId, including severity counts and gate status.",
     inputSchema: releaseIdInputSchema,
     annotations: {
       readOnlyHint: true,
@@ -197,7 +197,7 @@ export const webMcpToolCatalog = [
   {
     name: "get_change_risk",
     description:
-      "Get the code-change risk assessment and affected components for a specific software release.",
+      "Use to inspect change-risk evidence for one releaseId, including affected components and risk reasons.",
     inputSchema: releaseIdInputSchema,
     annotations: {
       readOnlyHint: true,
@@ -206,7 +206,7 @@ export const webMcpToolCatalog = [
   {
     name: "analyze_release",
     description:
-      "Analyze software release evidence and return a deterministic GO, CONDITIONAL GO, or NO GO system recommendation with blockers, warnings, and conditions. This does not record human approval.",
+      "Read-only: calculate the current deterministic system recommendation from evidence for one releaseId; returns GO, CONDITIONAL_GO, or NO_GO and never records human approval.",
     inputSchema: releaseIdInputSchema,
     annotations: {
       readOnlyHint: true,
@@ -215,7 +215,7 @@ export const webMcpToolCatalog = [
   {
     name: "approve_release",
     description:
-      "Record explicit human approval for a release after reviewing the current release recommendation and evidence.",
+      "Write operation: record explicit human approval only after the user clearly approves; requires acknowledgement=true, recalculates current evidence, and cannot override NO_GO.",
     inputSchema: approveReleaseInputSchema,
     annotations: {
       readOnlyHint: false,
@@ -224,7 +224,7 @@ export const webMcpToolCatalog = [
   {
     name: "reject_release",
     description:
-      "Record an explicit human rejection of a software release and preserve the decision in the audit trail.",
+      "Write operation: record explicit human rejection only after the user clearly rejects a release; optional reason is stored in the audit trail.",
     inputSchema: rejectReleaseInputSchema,
     annotations: {
       readOnlyHint: false,
@@ -233,7 +233,7 @@ export const webMcpToolCatalog = [
   {
     name: "get_final_decision",
     description:
-      "Get the recorded human final decision for a specific software release. Missing human decisions are returned as PENDING, not implicit approval.",
+      "Use to inspect the recorded human final decision for one releaseId; PENDING means no human approval or rejection is recorded.",
     inputSchema: releaseIdInputSchema,
     annotations: {
       readOnlyHint: true,
@@ -242,7 +242,7 @@ export const webMcpToolCatalog = [
   {
     name: "get_activity_log",
     description:
-      "Get recent release analysis and human decision activity recorded by the Release Gate.",
+      "Use to inspect recent human decision activity and blocked approval attempts; optionally filter by releaseId.",
     inputSchema: activityLogInputSchema,
     annotations: {
       readOnlyHint: true,
@@ -367,22 +367,12 @@ function mapAnalysisResult(releaseId: string): AnalysisToolResult {
     };
   }
 
-  addActivity({
-    timestamp: analysis.data.evaluatedAt,
-    type: "ANALYSIS",
-    releaseId,
-    toolName: "analyze_release",
-    outcome: "SUCCESS",
-    summary: `System recommendation is ${analysis.data.decision}.`,
-    recommendation: analysis.data.decision,
-  });
-
   return {
     analysis: analysis.data,
   };
 }
 
-function createWebMcpTools(): WebMCP.ModelContextTool[] {
+export function createWebMcpTools(): WebMCP.ModelContextTool[] {
   const [
     listReleasesTool,
     getReleaseTool,
