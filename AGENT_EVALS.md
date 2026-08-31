@@ -16,7 +16,7 @@ These evaluations verify that an agent can discover and compose the tools correc
 
 ## WebMCP tool catalog
 
-Release Gate intentionally exposes exactly 11 WebMCP tools.
+Release Gate intentionally exposes exactly 11 WebMCP tools: 9 read-only tools and 2 write tools.
 
 | Tool | Read-only | Purpose |
 | --- | --- | --- |
@@ -42,6 +42,10 @@ Release Gate intentionally exposes exactly 11 WebMCP tools.
 6. `reject_release` requires explicit human rejection intent.
 7. Unknown releases never silently fall back.
 8. Domain rules remain authoritative even if an agent selects an inappropriate tool.
+
+## Verification scope
+
+These scenarios define expected agent behavior and product-domain safety behavior. Manual WebMCP/domain verification is not the same thing as full external agent end-to-end validation; external agent-inspector results may vary by browser/runtime and testing environment.
 
 ## Scenario A — GO
 

@@ -1,6 +1,7 @@
 {
   "name": "webmcp-release-gate",
   "version": "0.1.0",
+  "description": "Agent-native software release decisions with human control.",
   "private": true,
   "scripts": {
     "dev": "next dev",
