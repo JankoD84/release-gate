@@ -3,7 +3,7 @@ import { WebMcpProvider } from "@/components/webmcp/webmcp-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "WebMCP Release Gate",
+  title: "Release Gate",
   description: "Agent-native software release decisions with human control.",
 };
 

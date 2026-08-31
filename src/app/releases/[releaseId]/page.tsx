@@ -1,11 +1,28 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import {
+  AppShell,
+  Badge,
+  decisionTone,
+  EmptyState,
+  ErrorState,
+  evidenceTone,
+  formatDate,
+  formatDateTime,
+  formatDecisionLabel,
+  formatDuration,
+  Hero,
+  Panel,
+  riskTone,
+  SectionHeader,
+} from "@/components/release-gate/ui";
+import { useWebMcpStatus } from "@/components/webmcp/webmcp-provider";
 import { analyzeRelease } from "@/lib/decision/engine";
 import type { DecisionAnalysis, DecisionEvidenceItem } from "@/lib/decision/types";
+import { resetDemoState } from "@/lib/decisions/demo-state";
 import {
   approveRelease,
   getFinalDecision,
@@ -15,58 +32,29 @@ import {
 import type { FinalDecisionState } from "@/lib/decisions/final-decision-types";
 import { getReleaseRecordById } from "@/lib/releases/fixtures";
 import type { ReleaseRecord } from "@/lib/releases/types";
+import { webMcpToolCatalog } from "@/lib/webmcp/register-tools";
 
-const decisionStyles = {
-  GO: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
-  CONDITIONAL_GO: "bg-amber-50 text-amber-800 ring-amber-600/20",
-  NO_GO: "bg-rose-50 text-rose-700 ring-rose-600/20",
-  PENDING: "bg-slate-100 text-slate-700 ring-slate-600/20",
-} as const;
-
-const riskStyles = {
-  LOW: "bg-slate-100 text-slate-700 ring-slate-600/20",
-  MEDIUM: "bg-orange-50 text-orange-700 ring-orange-600/20",
-  HIGH: "bg-red-50 text-red-700 ring-red-600/20",
-} as const;
-
-const gateStyles = {
-  PASS: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
-  WARNING: "bg-amber-50 text-amber-800 ring-amber-600/20",
-  FAIL: "bg-rose-50 text-rose-700 ring-rose-600/20",
-} as const;
-
-function Badge({ children, className }: { children: string; className: string }) {
-  return (
-    <span
-      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${className}`}
-    >
-      {children}
-    </span>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-        {label}
-      </p>
-      <p className="mt-2 text-2xl font-semibold text-slate-950">{value}</p>
-    </div>
-  );
-}
-
-function EvidenceList({ items }: { items: readonly DecisionEvidenceItem[] }) {
+function EvidenceList({ items, dominant = false }: { items: readonly DecisionEvidenceItem[]; dominant?: boolean }) {
   if (items.length === 0) {
-    return <p className="text-sm text-slate-500">None</p>;
+    return <p className="text-sm text-slate-400">None</p>;
   }
 
   return (
-    <ul className="space-y-2 text-sm leading-6 text-slate-600">
+    <ul className="space-y-3">
       {items.map((item) => (
-        <li key={item.code}>
-          <span className="font-semibold text-slate-800">{item.category}:</span>{" "}
-          {item.message}
+        <li
+          className={`rounded-2xl border p-4 ${
+            dominant
+              ? "border-rose-400/25 bg-rose-950/30"
+              : "border-slate-800 bg-slate-950/45"
+          }`}
+          key={item.code}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={dominant ? "blocked" : "warning"}>{item.severity}</Badge>
+            <span className="font-semibold text-slate-100">{item.category}</span>
+          </div>
+          <p className="mt-2 text-sm leading-6 text-slate-300">{item.message}</p>
         </li>
       ))}
     </ul>
@@ -75,40 +63,225 @@ function EvidenceList({ items }: { items: readonly DecisionEvidenceItem[] }) {
 
 function ConditionsList({ conditions }: { conditions: readonly string[] }) {
   if (conditions.length === 0) {
-    return <p className="text-sm text-slate-500">None</p>;
+    return <p className="text-sm text-slate-400">None</p>;
   }
 
   return (
-    <ul className="list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
+    <ul className="space-y-3">
       {conditions.map((condition) => (
-        <li key={condition}>{condition}</li>
+        <li className="rounded-2xl border border-amber-400/25 bg-amber-950/20 p-4 text-sm leading-6 text-amber-50" key={condition}>
+          {condition}
+        </li>
       ))}
     </ul>
   );
 }
 
-function EvidenceSection({
-  children,
+function EvidenceCard({
+  detail,
+  metrics,
+  status,
   title,
+  tone,
 }: {
-  children: React.ReactNode;
+  detail: string;
+  metrics: readonly { label: string; value: string | number }[];
+  status: string;
   title: string;
+  tone: ReturnType<typeof evidenceTone> | ReturnType<typeof riskTone>;
 }) {
   return (
-    <section className="rounded-3xl border border-slate-200 bg-white p-6 text-slate-950 shadow-xl shadow-black/10">
-      <h2 className="text-xl font-semibold">{title}</h2>
-      <div className="mt-5">{children}</div>
-    </section>
+    <article className="rounded-3xl border border-slate-800 bg-slate-900/80 p-5 shadow-xl shadow-black/10">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-lg font-semibold text-white">{title}</h3>
+          <p className="mt-1 text-sm text-slate-400">{detail}</p>
+        </div>
+        <Badge tone={tone}>{status}</Badge>
+      </div>
+      <dl className="mt-5 grid grid-cols-2 gap-3">
+        {metrics.map((metric) => (
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-3" key={metric.label}>
+            <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
+              {metric.label}
+            </dt>
+            <dd className="mt-1 wrap-break-word text-lg font-semibold text-slate-100">{metric.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </article>
   );
 }
 
-function ReleaseDetail({
+function DecisionGate({
   analysis,
-  release,
+  decisionState,
 }: {
   analysis: DecisionAnalysis;
-  release: ReleaseRecord;
+  decisionState: FinalDecisionState;
 }) {
+  const finalDecision =
+    decisionState.status === "DECIDED" ? decisionState.decision.finalDecision : "PENDING";
+
+  return (
+    <Panel className="overflow-hidden">
+      <SectionHeader
+        title="Decision Gate"
+        subtitle="System analysis informs the decision; human authority records the final release state."
+      />
+      <div className="grid gap-0 lg:grid-cols-[1fr_auto_1fr]">
+        <div className="p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+            System Recommendation
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Badge tone={decisionTone(analysis.decision)}>
+              {formatDecisionLabel(analysis.decision)}
+            </Badge>
+            <Badge tone={riskTone(analysis.confidence)}>Confidence {analysis.confidence}</Badge>
+          </div>
+          <p className="mt-4 text-sm leading-6 text-slate-300">{analysis.summary}</p>
+        </div>
+        <div className="hidden items-center border-x border-slate-800 px-5 text-slate-500 lg:flex" aria-hidden="true">
+          →
+        </div>
+        <div className="border-t border-slate-800 p-6 lg:border-t-0">
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+            Human Final Decision
+          </p>
+          <div className="mt-4">
+            <Badge tone={decisionTone(finalDecision)}>{formatDecisionLabel(finalDecision)}</Badge>
+          </div>
+          {decisionState.status === "DECIDED" ? (
+            <dl className="mt-5 grid gap-3 text-sm text-slate-300">
+              <div>
+                <dt className="text-slate-500">Status</dt>
+                <dd className="font-semibold text-slate-100">Decision recorded</dd>
+              </div>
+              <div>
+                <dt className="text-slate-500">Actor</dt>
+                <dd className="capitalize">{decisionState.decision.actor}</dd>
+              </div>
+              <div>
+                <dt className="text-slate-500">Timestamp</dt>
+                <dd>{formatDateTime(decisionState.decision.decidedAt)}</dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="mt-4 text-sm leading-6 text-slate-300">
+              Pending human approval or rejection. The recommendation is not a final decision.
+            </p>
+          )}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function HumanDecisionPanel({
+  acknowledgement,
+  actionMessage,
+  analysis,
+  decisionState,
+  onApprove,
+  onReject,
+  setAcknowledgement,
+}: {
+  acknowledgement: boolean;
+  actionMessage: string | null;
+  analysis: DecisionAnalysis;
+  decisionState: FinalDecisionState;
+  onApprove: () => void;
+  onReject: () => void;
+  setAcknowledgement: (value: boolean) => void;
+}) {
+  const canApprove = analysis.decision !== "NO_GO" && acknowledgement;
+
+  return (
+    <Panel className="overflow-hidden">
+      <SectionHeader
+        title="Human Decision"
+        subtitle="Approval and rejection are explicit human-controlled write actions."
+      />
+      <div className="p-6">
+        {decisionState.status === "DECIDED" ? (
+          <div className="rounded-2xl border border-emerald-400/25 bg-emerald-950/20 p-5">
+            <Badge tone={decisionTone(decisionState.decision.finalDecision)}>
+              {formatDecisionLabel(decisionState.decision.finalDecision)}
+            </Badge>
+            <h3 className="mt-4 text-lg font-semibold text-white">Decision recorded</h3>
+            <dl className="mt-4 grid gap-3 text-sm text-slate-300 sm:grid-cols-2">
+              <div>
+                <dt className="text-slate-500">Human decision</dt>
+                <dd className="font-semibold text-slate-100">
+                  {formatDecisionLabel(decisionState.decision.finalDecision)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-slate-500">Actor</dt>
+                <dd className="capitalize">{decisionState.decision.actor}</dd>
+              </div>
+              <div className="sm:col-span-2">
+                <dt className="text-slate-500">Reason</dt>
+                <dd>{decisionState.decision.reason}</dd>
+              </div>
+              <div>
+                <dt className="text-slate-500">Timestamp</dt>
+                <dd>{formatDateTime(decisionState.decision.decidedAt)}</dd>
+              </div>
+            </dl>
+          </div>
+        ) : (
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+            <div>
+              <label className="flex gap-3 rounded-2xl border border-slate-800 bg-slate-950/45 p-4 text-sm leading-6 text-slate-300">
+                <input
+                  checked={acknowledgement}
+                  className="mt-1 h-4 w-4 rounded border-slate-600 bg-slate-950 text-cyan-500 focus:ring-cyan-300"
+                  onChange={(event) => setAcknowledgement(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>
+                  I acknowledge the displayed system recommendation and release evidence before approving.
+                </span>
+              </label>
+              {analysis.decision === "NO_GO" ? (
+                <p className="mt-3 rounded-2xl border border-rose-400/25 bg-rose-950/25 p-4 text-sm font-semibold text-rose-100">
+                  This release is hard-blocked and cannot be approved.
+                </p>
+              ) : null}
+              {actionMessage ? (
+                <p className="mt-4 text-sm leading-6 text-slate-300" role="status">
+                  {actionMessage}
+                </p>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-3 lg:justify-end">
+              <button
+                className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200"
+                disabled={!canApprove}
+                onClick={onApprove}
+                type="button"
+              >
+                Approve {formatDecisionLabel(analysis.decision)}
+              </button>
+              <button
+                className="rounded-full border border-rose-300/35 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:border-rose-200 hover:bg-rose-400/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-200"
+                onClick={onReject}
+                type="button"
+              >
+                Reject Release
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function ReleaseDetail({ analysis, release }: { analysis: DecisionAnalysis; release: ReleaseRecord }) {
+  const webMcpStatus = useWebMcpStatus();
   const { evidence } = release;
   const [acknowledgement, setAcknowledgement] = useState(false);
   const [decisionState, setDecisionState] = useState<FinalDecisionState>({
@@ -116,11 +289,7 @@ function ReleaseDetail({
     status: "PENDING",
   });
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const finalDecision =
-    decisionState.status === "DECIDED"
-      ? decisionState.decision.finalDecision
-      : "PENDING";
-  const canApprove = analysis.decision !== "NO_GO" && acknowledgement;
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const refreshDecision = () => setDecisionState(getFinalDecision(release.id));
@@ -135,315 +304,226 @@ function ReleaseDetail({
 
     if (result.ok) {
       setDecisionState(getFinalDecision(release.id));
-      setActionMessage(`Human final decision recorded: ${result.decision.finalDecision}.`);
+      setActionMessage(`Human final decision recorded: ${formatDecisionLabel(result.decision.finalDecision)}.`);
       return;
     }
 
-    setActionMessage(`${result.error.code}: ${result.error.message}`);
+    setActionMessage(result.error.message);
   }
 
   function handleReject() {
-    const result = rejectRelease(
-      release.id,
-      "Human rejected from release detail UI.",
-    );
+    const result = rejectRelease(release.id, "Human rejected from release detail UI.");
 
     if (result.ok) {
       setDecisionState(getFinalDecision(release.id));
-      setActionMessage("Human final decision recorded: NO_GO.");
+      setActionMessage("Human final decision recorded: NO GO.");
       return;
     }
 
-    setActionMessage(`${result.error.code}: ${result.error.message}`);
+    setActionMessage(result.error.message);
+  }
+
+  function handleResetDemoState() {
+    if (window.confirm("Reset demo state? This clears final decisions and activity.")) {
+      resetDemoState();
+      setActionMessage(null);
+      setAcknowledgement(false);
+      setResetMessage("Demo state reset.");
+      window.setTimeout(() => setResetMessage(null), 2400);
+    }
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100 sm:px-10">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
-        <Link
-          className="w-fit font-semibold text-cyan-200 underline-offset-4 hover:underline"
-          href="/"
+    <AppShell
+      current="releases"
+      onReset={handleResetDemoState}
+      resetMessage={resetMessage}
+      status={webMcpStatus}
+      toolCount={webMcpToolCatalog.length}
+    >
+      <div className="flex flex-col gap-6">
+        <Hero
+          eyebrow="Release evidence"
+          title={`Release ${release.version}`}
+          subtitle="Evidence, system recommendation, and human final decision are separated for controlled release authority."
         >
-          ← Back to releases
-        </Link>
-
-        <header className="rounded-3xl border border-white/10 bg-white/3 p-8 shadow-2xl shadow-black/20">
-          <p className="mb-3 text-sm font-semibold uppercase tracking-[0.24em] text-cyan-300">
-            Release evidence
-          </p>
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
-                {release.name}
-              </h1>
-              <dl className="mt-5 grid gap-3 text-sm text-slate-300 sm:grid-cols-2">
-                <div>
-                  <dt className="text-slate-500">Version</dt>
-                  <dd className="font-mono text-slate-100">{release.version}</dd>
-                </div>
-                <div>
-                  <dt className="text-slate-500">Branch</dt>
-                  <dd className="font-mono text-slate-100">{release.branch}</dd>
-                </div>
-                <div className="sm:col-span-2">
-                  <dt className="text-slate-500">Commit SHA</dt>
-                  <dd className="break-all font-mono text-slate-100">
-                    {release.commitSha}
-                  </dd>
-                </div>
-              </dl>
-            </div>
-            <div className="flex flex-wrap gap-3 rounded-2xl border border-white/10 bg-slate-900/80 p-4">
-              <Badge className={decisionStyles[analysis.decision]}>
-                {analysis.decision}
-              </Badge>
-              <Badge className={riskStyles[release.risk]}>{release.risk}</Badge>
-            </div>
-          </div>
-        </header>
-
-        <EvidenceSection title="System Recommendation">
-          <div className="mb-5 flex flex-wrap gap-3">
-            <Badge className={decisionStyles[analysis.decision]}>
-              {analysis.decision}
-            </Badge>
-            <Badge className={riskStyles[analysis.confidence]}>
-              {analysis.confidence}
+          <div className="flex flex-wrap gap-3 rounded-2xl border border-slate-700 bg-slate-950/55 p-4">
+            <Badge tone={riskTone(release.risk)}>Risk {release.risk}</Badge>
+            <Badge tone={decisionTone(analysis.decision)}>
+              System {formatDecisionLabel(analysis.decision)}
             </Badge>
           </div>
-          <p className="text-sm leading-6 text-slate-600">{analysis.summary}</p>
-          <div className="mt-6 grid gap-5 lg:grid-cols-3">
-            <div>
-              <h3 className="font-semibold">Blocking evidence</h3>
-              <div className="mt-3">
-                <EvidenceList items={analysis.blockingEvidence} />
-              </div>
-            </div>
-            <div>
-              <h3 className="font-semibold">Warnings</h3>
-              <div className="mt-3">
-                <EvidenceList items={analysis.warnings} />
-              </div>
-            </div>
-            <div>
-              <h3 className="font-semibold">Conditions</h3>
-              <div className="mt-3">
-                <ConditionsList conditions={analysis.conditions} />
-              </div>
-            </div>
-          </div>
-        </EvidenceSection>
+        </Hero>
 
-        <EvidenceSection title="Human Final Decision">
-          <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
+        <Panel className="p-6">
+          <dl className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Human decision
+              <dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Branch</dt>
+              <dd className="mt-2 font-mono text-slate-100">{release.branch}</dd>
+            </div>
+            <div className="sm:col-span-2">
+              <dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Commit SHA</dt>
+              <dd className="mt-2 break-all font-mono text-slate-100">{release.commitSha}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Updated</dt>
+              <dd className="mt-2 text-slate-100">{formatDate(release.updatedAt)}</dd>
+            </div>
+          </dl>
+        </Panel>
+
+        <DecisionGate analysis={analysis} decisionState={decisionState} />
+
+        <Panel className="overflow-hidden">
+          <SectionHeader title="Decision Analysis" subtitle="No raw JSON. Only release-relevant blockers, warnings, and conditions are shown." />
+          <div className="grid gap-6 p-6 xl:grid-cols-[1fr_1fr_1fr]">
+            <div className="xl:col-span-3">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Summary</h3>
+              <p className="mt-3 rounded-2xl border border-slate-800 bg-slate-950/45 p-4 text-sm leading-6 text-slate-300">
+                {analysis.summary}
               </p>
-              <div className="mt-3">
-                <Badge className={decisionStyles[finalDecision]}>{finalDecision}</Badge>
-              </div>
-              {decisionState.status === "DECIDED" ? (
-                <dl className="mt-5 grid gap-3 text-sm text-slate-600">
-                  <div>
-                    <dt className="font-semibold text-slate-800">Recorded by</dt>
-                    <dd className="capitalize">{decisionState.decision.actor}</dd>
-                  </div>
-                  <div>
-                    <dt className="font-semibold text-slate-800">Timestamp</dt>
-                    <dd>{decisionState.decision.decidedAt}</dd>
-                  </div>
-                  <div>
-                    <dt className="font-semibold text-slate-800">Reason</dt>
-                    <dd>{decisionState.decision.reason}</dd>
-                  </div>
-                </dl>
-              ) : (
-                <p className="mt-4 text-sm leading-6 text-slate-600">
-                  Pending explicit human authority. The system recommendation is not an approval.
-                </p>
-              )}
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-              <p className="font-semibold text-slate-950">Human authority actions</p>
-              <label className="mt-4 flex gap-3 text-sm leading-6 text-slate-600">
-                <input
-                  checked={acknowledgement}
-                  className="mt-1 h-4 w-4"
-                  onChange={(event) => setAcknowledgement(event.target.checked)}
-                  type="checkbox"
-                />
-                <span>
-                  I acknowledge the displayed system recommendation and release evidence before approving.
-                </span>
-              </label>
-              {analysis.decision === "NO_GO" ? (
-                <p className="mt-3 text-sm font-semibold text-rose-700">
-                  Approval is unavailable because NO_GO is hard-blocked.
-                </p>
-              ) : null}
-              <div className="mt-5 flex flex-wrap gap-3">
-                <button
-                  className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
-                  disabled={!canApprove}
-                  onClick={handleApprove}
-                  type="button"
-                >
-                  Approve
-                </button>
-                <button
-                  className="rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white"
-                  onClick={handleReject}
-                  type="button"
-                >
-                  Reject
-                </button>
-              </div>
-              {actionMessage ? (
-                <p className="mt-4 text-sm leading-6 text-slate-700">{actionMessage}</p>
-              ) : null}
+            <div className={analysis.decision === "NO_GO" ? "xl:col-span-2" : ""}>
+              <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Blocking Evidence</h3>
+              <EvidenceList dominant={analysis.decision === "NO_GO"} items={analysis.blockingEvidence} />
+            </div>
+            <div>
+              <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Warnings</h3>
+              <EvidenceList items={analysis.warnings} />
+            </div>
+            <div>
+              <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Conditions</h3>
+              <ConditionsList conditions={analysis.conditions} />
             </div>
           </div>
-        </EvidenceSection>
+        </Panel>
 
-        <EvidenceSection title="CI">
-          <div className="mb-5">
-            <Badge className={gateStyles[evidence.ci.status]}>
-              {evidence.ci.status}
-            </Badge>
+        <section aria-labelledby="release-evidence-title">
+          <div className="mb-4">
+            <h2 className="text-lg font-semibold text-white" id="release-evidence-title">Release Evidence</h2>
+            <p className="mt-1 text-sm text-slate-400">Four deterministic evidence surfaces drive the system recommendation.</p>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            <Stat label="Workflow" value={evidence.ci.workflow} />
-            <Stat label="Total jobs" value={evidence.ci.totalJobs} />
-            <Stat label="Passed jobs" value={evidence.ci.passedJobs} />
-            <Stat label="Failed jobs" value={evidence.ci.failedJobs} />
-            <Stat label="Duration" value={`${evidence.ci.durationSeconds}s`} />
-          </div>
-        </EvidenceSection>
-
-        <EvidenceSection title="Tests">
-          <div className="mb-5">
-            <Badge className={gateStyles[evidence.tests.status]}>
-              {evidence.tests.status}
-            </Badge>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            <Stat label="Total" value={evidence.tests.total} />
-            <Stat label="Passed" value={evidence.tests.passed} />
-            <Stat label="Failed" value={evidence.tests.failed} />
-            <Stat label="Flaky" value={evidence.tests.flaky} />
-            <Stat label="Coverage" value={`${evidence.tests.coveragePercent}%`} />
-          </div>
-        </EvidenceSection>
-
-        <EvidenceSection title="Security">
-          <div className="mb-5">
-            <Badge className={gateStyles[evidence.security.status]}>
-              {evidence.security.status}
-            </Badge>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat label="Critical" value={evidence.security.critical} />
-            <Stat label="High" value={evidence.security.high} />
-            <Stat label="Medium" value={evidence.security.medium} />
-            <Stat label="Low" value={evidence.security.low} />
-          </div>
-        </EvidenceSection>
-
-        <EvidenceSection title="Change Risk">
-          <div className="mb-5">
-            <Badge className={riskStyles[evidence.changeRisk.level]}>
-              {evidence.changeRisk.level}
-            </Badge>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat label="Files changed" value={evidence.changeRisk.filesChanged} />
-            <Stat label="Lines added" value={evidence.changeRisk.linesAdded} />
-            <Stat label="Lines deleted" value={evidence.changeRisk.linesDeleted} />
-            <Stat
-              label="Components"
-              value={evidence.changeRisk.changedComponents.length}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <EvidenceCard
+              detail={`${evidence.ci.passedJobs} / ${evidence.ci.totalJobs} jobs passed`}
+              metrics={[
+                { label: "Workflow", value: evidence.ci.workflow },
+                { label: "Duration", value: formatDuration(evidence.ci.durationSeconds) },
+                { label: "Passed", value: evidence.ci.passedJobs },
+                { label: "Failed", value: evidence.ci.failedJobs },
+              ]}
+              status={evidence.ci.status}
+              title="CI"
+              tone={evidenceTone(evidence.ci.status)}
+            />
+            <EvidenceCard
+              detail={`${evidence.tests.passed} / ${evidence.tests.total} passed · ${evidence.tests.flaky} flaky`}
+              metrics={[
+                { label: "Total", value: evidence.tests.total },
+                { label: "Passed", value: evidence.tests.passed },
+                { label: "Failed", value: evidence.tests.failed },
+                { label: "Coverage", value: `${evidence.tests.coveragePercent}%` },
+              ]}
+              status={evidence.tests.status}
+              title="Tests"
+              tone={evidenceTone(evidence.tests.status)}
+            />
+            <EvidenceCard
+              detail={`${evidence.security.critical} critical · ${evidence.security.high} high · ${evidence.security.medium} medium`}
+              metrics={[
+                { label: "Critical", value: evidence.security.critical },
+                { label: "High", value: evidence.security.high },
+                { label: "Medium", value: evidence.security.medium },
+                { label: "Low", value: evidence.security.low },
+              ]}
+              status={evidence.security.status}
+              title="Security"
+              tone={evidenceTone(evidence.security.status)}
+            />
+            <EvidenceCard
+              detail={`${evidence.changeRisk.filesChanged} files changed · ${evidence.changeRisk.changedComponents.join(", ")}`}
+              metrics={[
+                { label: "Files", value: evidence.changeRisk.filesChanged },
+                { label: "Added", value: evidence.changeRisk.linesAdded },
+                { label: "Deleted", value: evidence.changeRisk.linesDeleted },
+                { label: "Components", value: evidence.changeRisk.changedComponents.length },
+              ]}
+              status={evidence.changeRisk.level}
+              title="Change Risk"
+              tone={riskTone(evidence.changeRisk.level)}
             />
           </div>
-          <div className="mt-6 grid gap-5 lg:grid-cols-2">
-            <div>
-              <h3 className="font-semibold">Changed components</h3>
-              <ul className="mt-3 flex flex-wrap gap-2">
-                {evidence.changeRisk.changedComponents.map((component) => (
-                  <li
-                    className="rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-700"
-                    key={component}
-                  >
-                    {component}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <h3 className="font-semibold">Reasons</h3>
-              <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
-                {evidence.changeRisk.reasons.map((reason) => (
-                  <li key={reason}>{reason}</li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </EvidenceSection>
+        </section>
+
+        <HumanDecisionPanel
+          acknowledgement={acknowledgement}
+          actionMessage={actionMessage}
+          analysis={analysis}
+          decisionState={decisionState}
+          onApprove={handleApprove}
+          onReject={handleReject}
+          setAcknowledgement={setAcknowledgement}
+        />
+
+        {decisionState.status === "PENDING" ? (
+          <EmptyState
+            title="No final decision recorded"
+            body="The release remains pending until a human approves the recommendation or rejects the release."
+          />
+        ) : null}
       </div>
-    </main>
+    </AppShell>
   );
 }
 
 export default function ReleaseDetailPage() {
   const params = useParams<{ releaseId: string }>();
+  const webMcpStatus = useWebMcpStatus();
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
   const releaseResult = getReleaseRecordById(params.releaseId);
   const analysisResult = analyzeRelease(params.releaseId);
 
+  function handleResetDemoState() {
+    if (window.confirm("Reset demo state? This clears final decisions and activity.")) {
+      resetDemoState();
+      setResetMessage("Demo state reset.");
+      window.setTimeout(() => setResetMessage(null), 2400);
+    }
+  }
+
   if (!releaseResult.ok) {
     return (
-      <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100 sm:px-10">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-          <Link
-            className="w-fit font-semibold text-cyan-200 underline-offset-4 hover:underline"
-            href="/"
-          >
-            ← Back to releases
-          </Link>
-          <section className="rounded-3xl border border-rose-400/30 bg-rose-950/30 p-8">
-            <p className="text-sm font-semibold uppercase tracking-[0.24em] text-rose-200">
-              {releaseResult.error.code}
-            </p>
-            <h1 className="mt-3 text-3xl font-semibold text-white">
-              Release not found
-            </h1>
-            <p className="mt-4 text-slate-300">{releaseResult.error.message}</p>
-          </section>
-        </div>
-      </main>
+      <AppShell
+        current="releases"
+        onReset={handleResetDemoState}
+        resetMessage={resetMessage}
+        status={webMcpStatus}
+        toolCount={webMcpToolCatalog.length}
+      >
+        <ErrorState
+          body={releaseResult.error.message}
+          code={releaseResult.error.code}
+          title="Release not found"
+        />
+      </AppShell>
     );
   }
 
   if (!analysisResult.ok) {
     return (
-      <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100 sm:px-10">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-          <Link
-            className="w-fit font-semibold text-cyan-200 underline-offset-4 hover:underline"
-            href="/"
-          >
-            ← Back to releases
-          </Link>
-          <section className="rounded-3xl border border-rose-400/30 bg-rose-950/30 p-8">
-            <p className="text-sm font-semibold uppercase tracking-[0.24em] text-rose-200">
-              {analysisResult.error.code}
-            </p>
-            <h1 className="mt-3 text-3xl font-semibold text-white">
-              Release analysis unavailable
-            </h1>
-            <p className="mt-4 text-slate-300">{analysisResult.error.message}</p>
-          </section>
-        </div>
-      </main>
+      <AppShell
+        current="releases"
+        onReset={handleResetDemoState}
+        resetMessage={resetMessage}
+        status={webMcpStatus}
+        toolCount={webMcpToolCatalog.length}
+      >
+        <ErrorState
+          body={analysisResult.error.message}
+          code={analysisResult.error.code}
+          title="Release analysis unavailable"
+        />
+      </AppShell>
     );
   }
 
