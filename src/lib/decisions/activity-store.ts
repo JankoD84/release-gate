@@ -1,4 +1,5 @@
 import type { ReleaseDecision } from "../decision/types.ts";
+import type { ReleaseMode } from "../mode.ts";
 import type { ActivityLogResult, ActivityOutcome, ActivityRecord, ActivityType } from "./activity-types.ts";
 
 export const ACTIVITY_STORAGE_KEY = "release-gate:activity:v1";
@@ -21,6 +22,7 @@ export type AddActivityInput = {
   outcome: ActivityOutcome;
   summary: string;
   recommendation?: ReleaseDecision;
+  mode?: ReleaseMode;
 };
 
 let storageOverride: BrowserStorage | null | undefined;
@@ -72,6 +74,7 @@ function isActivityRecord(value: unknown): value is ActivityRecord {
     typeof value.toolName === "string" &&
     isActivityOutcome(value.outcome) &&
     typeof value.summary === "string" &&
+    (!("mode" in value) || value.mode === undefined || value.mode === "LIVE" || value.mode === "DEMO") &&
     (!("recommendation" in value) ||
       value.recommendation === undefined ||
       isReleaseDecision(value.recommendation))
@@ -129,6 +132,7 @@ function loadPersistedState(storage: BrowserStorage | null): ActivityStoreState 
       outcome: record.outcome,
       summary: record.summary,
       ...(record.recommendation ? { recommendation: record.recommendation } : {}),
+      ...(record.mode ? { mode: record.mode } : {}),
     }));
 
     return createStateFromRecords(records);
@@ -185,11 +189,15 @@ export function addActivity(input: AddActivityInput): ActivityRecord {
   return activity;
 }
 
-export function getActivityLog(releaseId?: string): ActivityLogResult {
+export function getActivityLog(releaseId?: string, mode?: ReleaseMode): ActivityLogResult {
   const records = getActivityStoreState().records;
-  const activities = releaseId
-    ? records.filter((activity) => activity.releaseId === releaseId)
-    : records;
+  const activities = records.filter((activity) => {
+    if (releaseId) {
+      return activity.releaseId === releaseId;
+    }
+
+    return mode ? activity.mode === mode : true;
+  });
 
   return {
     activities,

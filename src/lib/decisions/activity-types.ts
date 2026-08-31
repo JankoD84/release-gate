@@ -1,4 +1,5 @@
 import type { ReleaseDecision } from "../decision/types.ts";
+import type { ReleaseMode } from "../mode.ts";
 
 export type ActivityType = "ANALYSIS" | "APPROVAL" | "REJECTION";
 
@@ -13,6 +14,7 @@ export type ActivityRecord = {
   outcome: ActivityOutcome;
   summary: string;
   recommendation?: ReleaseDecision;
+  mode?: ReleaseMode;
 };
 
 export type ActivityLogResult = {

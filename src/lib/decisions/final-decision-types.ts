@@ -1,4 +1,5 @@
 import type { DecisionEvidenceItem, ReleaseDecision } from "../decision/types.ts";
+import type { LiveEvidenceError } from "../releases/live-evidence.ts";
 import type { ReleaseNotFoundError } from "../releases/types.ts";
 
 export type FinalDecisionAction = "APPROVE" | "REJECT";
@@ -31,6 +32,7 @@ export type ReleaseBlockedError = {
 
 export type FinalDecisionError =
   | ReleaseNotFoundError
+  | LiveEvidenceError
   | HumanAcknowledgementRequiredError
   | ReleaseBlockedError;
 

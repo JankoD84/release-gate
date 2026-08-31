@@ -1,6 +1,8 @@
-import { analyzeRelease } from "../decision/engine.ts";
-import type { ReleaseDecision } from "../decision/types.ts";
+import { analyzeRelease, analyzeReleaseRecord } from "../decision/engine.ts";
+import type { DecisionAnalysis, ReleaseDecision } from "../decision/types.ts";
+import type { ReleaseMode } from "../mode.ts";
 import { getReleaseById } from "../releases/fixtures.ts";
+import type { ReleaseRecord } from "../releases/types.ts";
 import { addActivity } from "./activity-store.ts";
 import type {
   FinalDecisionMutationResult,
@@ -22,6 +24,7 @@ type BrowserStorage = Pick<Storage, "getItem" | "removeItem" | "setItem">;
 
 export type DecisionMutationOptions = {
   now?: () => string;
+  mode?: ReleaseMode;
 };
 
 let storageOverride: BrowserStorage | null | undefined;
@@ -175,20 +178,12 @@ function mapApprovedFinalDecision(recommendation: ReleaseDecision): ReleaseDecis
   return recommendation === "GO" ? "GO" : "CONDITIONAL_GO";
 }
 
-export function approveRelease(
-  releaseId: string,
+export function approveReleaseAnalysis(
+  analysis: DecisionAnalysis,
   acknowledgement: boolean,
   options: DecisionMutationOptions = {},
 ): FinalDecisionMutationResult {
-  const analysis = analyzeRelease(releaseId, { evaluatedAt: getTimestamp(options) });
-
-  if (!analysis.ok) {
-    return {
-      ok: false,
-      error: analysis.error,
-    };
-  }
-
+  const releaseId = analysis.releaseId;
   if (!acknowledgement) {
     return {
       ok: false,
@@ -196,7 +191,7 @@ export function approveRelease(
     };
   }
 
-  if (analysis.data.decision === "NO_GO") {
+  if (analysis.decision === "NO_GO") {
     const state = getFinalDecisionStoreState();
     const existingDecision = state.recordsByReleaseId.get(releaseId);
 
@@ -207,29 +202,30 @@ export function approveRelease(
     }
 
     addActivity({
-      timestamp: analysis.data.evaluatedAt,
+      timestamp: analysis.evaluatedAt,
       type: "APPROVAL",
       releaseId,
       toolName: "approve_release",
       outcome: "RELEASE_BLOCKED",
       summary: "Human approval was blocked because the current recommendation is NO_GO.",
-      recommendation: analysis.data.decision,
+      recommendation: analysis.decision,
+      mode: options.mode ?? "DEMO",
     });
 
     return {
       ok: false,
-      error: createReleaseBlockedError(releaseId, analysis.data.blockingEvidence),
+      error: createReleaseBlockedError(releaseId, analysis.blockingEvidence),
     };
   }
 
   const record: FinalDecisionRecord = {
     releaseId,
     action: "APPROVE",
-    recommendation: analysis.data.decision,
-    finalDecision: mapApprovedFinalDecision(analysis.data.decision),
+    recommendation: analysis.decision,
+    finalDecision: mapApprovedFinalDecision(analysis.decision),
     actor: "human",
     reason: "Human explicitly acknowledged the current recommendation and evidence.",
-    decidedAt: analysis.data.evaluatedAt,
+    decidedAt: analysis.evaluatedAt,
   };
 
   const state = getFinalDecisionStoreState();
@@ -245,6 +241,80 @@ export function approveRelease(
     outcome: "SUCCESS",
     summary: `Human approved ${record.finalDecision}.`,
     recommendation: record.recommendation,
+    mode: options.mode ?? "DEMO",
+  });
+
+  return {
+    ok: true,
+    decision: record,
+  };
+}
+
+export function approveRelease(
+  releaseId: string,
+  acknowledgement: boolean,
+  options: DecisionMutationOptions = {},
+): FinalDecisionMutationResult {
+  const analysis = analyzeRelease(releaseId, { evaluatedAt: getTimestamp(options) });
+
+  if (!analysis.ok) {
+    return {
+      ok: false,
+      error: analysis.error,
+    };
+  }
+
+  return approveReleaseAnalysis(analysis.data, acknowledgement, {
+    ...options,
+    mode: options.mode ?? "DEMO",
+  });
+}
+
+export function approveReleaseRecord(
+  record: ReleaseRecord,
+  acknowledgement: boolean,
+  options: DecisionMutationOptions = {},
+): FinalDecisionMutationResult {
+  const analysis = analyzeReleaseRecord(record, { evaluatedAt: getTimestamp(options) });
+
+  return approveReleaseAnalysis(analysis.data, acknowledgement, {
+    ...options,
+    mode: options.mode ?? "LIVE",
+  });
+}
+
+export function rejectReleaseAnalysis(
+  analysis: DecisionAnalysis,
+  reason: string | undefined,
+  options: DecisionMutationOptions = {},
+): FinalDecisionMutationResult {
+  const releaseId = analysis.releaseId;
+  const decidedAt = analysis.evaluatedAt;
+  const cleanReason = reason?.trim() || "Human explicitly rejected the release.";
+  const record: FinalDecisionRecord = {
+    releaseId,
+    action: "REJECT",
+    recommendation: analysis.decision,
+    finalDecision: "NO_GO",
+    actor: "human",
+    reason: cleanReason,
+    decidedAt,
+  };
+
+  const state = getFinalDecisionStoreState();
+  state.recordsByReleaseId.set(releaseId, record);
+  persistState(state);
+  notifyFinalDecisionSubscribers();
+
+  addActivity({
+    timestamp: record.decidedAt,
+    type: "REJECTION",
+    releaseId,
+    toolName: "reject_release",
+    outcome: "SUCCESS",
+    summary: `Human rejected release; final decision is ${record.finalDecision}.`,
+    recommendation: record.recommendation,
+    mode: options.mode ?? "DEMO",
   });
 
   return {
@@ -277,36 +347,23 @@ export function rejectRelease(
     };
   }
 
-  const cleanReason = reason.trim() || "Human explicitly rejected the release.";
-  const record: FinalDecisionRecord = {
-    releaseId,
-    action: "REJECT",
-    recommendation: analysis.data.decision,
-    finalDecision: "NO_GO",
-    actor: "human",
-    reason: cleanReason,
-    decidedAt,
-  };
-
-  const state = getFinalDecisionStoreState();
-  state.recordsByReleaseId.set(releaseId, record);
-  persistState(state);
-  notifyFinalDecisionSubscribers();
-
-  addActivity({
-    timestamp: record.decidedAt,
-    type: "REJECTION",
-    releaseId,
-    toolName: "reject_release",
-    outcome: "SUCCESS",
-    summary: `Human rejected release; final decision is ${record.finalDecision}.`,
-    recommendation: record.recommendation,
+  return rejectReleaseAnalysis(analysis.data, reason, {
+    ...options,
+    mode: options.mode ?? "DEMO",
   });
+}
 
-  return {
-    ok: true,
-    decision: record,
-  };
+export function rejectReleaseRecord(
+  record: ReleaseRecord,
+  reason = "Human explicitly rejected the release.",
+  options: DecisionMutationOptions = {},
+): FinalDecisionMutationResult {
+  const analysis = analyzeReleaseRecord(record, { evaluatedAt: getTimestamp(options) });
+
+  return rejectReleaseAnalysis(analysis.data, reason, {
+    ...options,
+    mode: options.mode ?? "LIVE",
+  });
 }
 
 export function getFinalDecision(releaseId: string): FinalDecisionState {

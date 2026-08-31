@@ -33,7 +33,7 @@ export type TestEvidence = {
   passed: number;
   failed: number;
   flaky: number;
-  coveragePercent: number;
+  coveragePercent: number | null;
 };
 
 export type SecurityEvidence = {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 
+import { setReleaseModeForTests } from "../mode.ts";
 import {
   getActivityLog,
   resetActivityLogForTests,
@@ -57,6 +58,7 @@ async function executeTool(name: string, input: JsonRecord = {}): Promise<JsonRe
 }
 
 beforeEach(() => {
+  setReleaseModeForTests("DEMO");
   const storage = new MemoryStorage();
 
   setFinalDecisionStorageForTests(storage);

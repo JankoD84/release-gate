@@ -4,7 +4,7 @@ import {
   getSecurityEvidenceByReleaseId,
   getTestEvidenceByReleaseId,
 } from "../releases/fixtures.ts";
-import type { ReleaseEvidence } from "../releases/types.ts";
+import type { ReleaseEvidence, ReleaseRecord } from "../releases/types.ts";
 import { createConditions, findHardBlockers, findMaterialWarnings } from "./rules.ts";
 import type {
   DecisionAnalysis,
@@ -49,6 +49,16 @@ export function evaluateReleaseEvidence(
     conditions: decision === "CONDITIONAL_GO" ? createConditions(warnings) : [],
     summary: createSummary(decision),
     evaluatedAt: options.evaluatedAt ?? new Date().toISOString(),
+  };
+}
+
+export function analyzeReleaseRecord(
+  record: ReleaseRecord,
+  options: DecisionEvaluationOptions = {},
+): { ok: true; data: DecisionAnalysis } {
+  return {
+    ok: true,
+    data: evaluateReleaseEvidence(record.id, record.evidence, options),
   };
 }
 

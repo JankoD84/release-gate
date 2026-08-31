@@ -19,6 +19,7 @@ import {
   subscribeToActivityLogChanges,
 } from "@/lib/decisions/activity-store";
 import { resetDemoState } from "@/lib/decisions/demo-state";
+import { getActiveReleaseMode, subscribeToReleaseModeChanges } from "@/lib/mode";
 import type { ActivityRecord } from "@/lib/decisions/activity-types";
 import { webMcpToolCatalog } from "@/lib/webmcp/register-tools";
 
@@ -28,17 +29,23 @@ export default function ActivityPage() {
   const [resetMessage, setResetMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    const refreshActivities = () => setActivities(getActivityLog().activities);
+    const refreshActivities = () => setActivities(getActivityLog(undefined, getActiveReleaseMode()).activities);
 
     refreshActivities();
 
-    return subscribeToActivityLogChanges(refreshActivities);
+    const unsubscribeActivity = subscribeToActivityLogChanges(refreshActivities);
+    const unsubscribeMode = subscribeToReleaseModeChanges(refreshActivities);
+
+    return () => {
+      unsubscribeActivity();
+      unsubscribeMode();
+    };
   }, []);
 
   function handleResetDemoState() {
-    if (window.confirm("Reset demo state? This clears final decisions and activity.")) {
+    if (window.confirm("Reset local decisions? This clears browser-local final decisions and activity only.")) {
       resetDemoState();
-      setResetMessage("Demo state reset.");
+      setResetMessage("Local decisions reset.");
       window.setTimeout(() => setResetMessage(null), 2400);
     }
   }
@@ -46,7 +53,7 @@ export default function ActivityPage() {
   return (
     <AppShell
       current="activity"
-      onReset={handleResetDemoState}
+      resetAction={handleResetDemoState}
       resetMessage={resetMessage}
       status={webMcpStatus}
       toolCount={webMcpToolCatalog.length}
@@ -86,6 +93,7 @@ export default function ActivityPage() {
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Release</p>
                       <p className="mt-1 font-mono text-sm text-slate-100">{activity.releaseId}</p>
+                      {activity.mode ? <p className="mt-2"><Badge tone={activity.mode === "LIVE" ? "read" : "neutral"}>{activity.mode}</Badge></p> : null}
                     </div>
                   </div>
                   <div>

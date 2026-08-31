@@ -1,7 +1,12 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
 
 import type { ActivityRecord } from "@/lib/decisions/activity-types";
+import { getActiveReleaseMode, setActiveReleaseMode, subscribeToReleaseModeChanges, type ReleaseMode } from "@/lib/mode";
 import type { WebMcpRegistrationStatus } from "@/lib/webmcp/types";
 
 export type BadgeTone =
@@ -120,17 +125,62 @@ export function WebMcpStatus({ status, toolCount }: { status: WebMcpRegistration
   );
 }
 
+function ModeSwitch() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [mode, setMode] = useState<ReleaseMode>("LIVE");
+
+  useEffect(() => {
+    const refresh = () => setMode(getActiveReleaseMode());
+
+    refresh();
+    return subscribeToReleaseModeChanges(refresh);
+  }, []);
+
+  function chooseMode(nextMode: ReleaseMode) {
+    if (nextMode === mode) return;
+    setActiveReleaseMode(nextMode);
+    setMode(nextMode);
+
+    if (pathname.startsWith("/releases/")) {
+      router.push("/");
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-2">
+      <div className="flex gap-1" role="group" aria-label="Evidence mode">
+        {(["LIVE", "DEMO"] as const).map((candidate) => (
+          <button
+            key={candidate}
+            className={`rounded-full px-3 py-1.5 text-sm font-bold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 ${
+              mode === candidate ? "bg-cyan-100 text-slate-950" : "text-slate-300 hover:bg-slate-800 hover:text-white"
+            }`}
+            onClick={() => chooseMode(candidate)}
+            type="button"
+          >
+            {candidate}
+          </button>
+        ))}
+      </div>
+      <p className="mt-2 px-1 text-xs leading-5 text-slate-400">
+        {mode === "LIVE" ? "Live GitHub Evidence · JankoD84/release-gate" : "Deterministic Safety Scenarios"}
+      </p>
+    </div>
+  );
+}
+
 export function AppShell({
   children,
   current,
-  onReset,
+  resetAction,
   resetMessage,
   status,
   toolCount,
 }: {
   children: ReactNode;
   current: "releases" | "activity";
-  onReset: () => void;
+  resetAction: () => void;
   resetMessage?: string | null;
   status: WebMcpRegistrationStatus;
   toolCount: number;
@@ -169,13 +219,14 @@ export function AppShell({
             </nav>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            <ModeSwitch />
             <WebMcpStatus status={status} toolCount={toolCount} />
             <button
               className="rounded-full border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500 hover:bg-slate-800 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
-              onClick={onReset}
+              onClick={resetAction}
               type="button"
             >
-              Reset demo state
+              Reset local decisions
             </button>
           </div>
         </div>

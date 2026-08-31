@@ -1,30 +1,14 @@
-import { analyzeRelease } from "../decision/engine.ts";
-import type { DecisionAnalysis, ReleaseDecision } from "../decision/types.ts";
-import { getActivityLog } from "../decisions/activity-store.ts";
+import type { DecisionAnalysis } from "../decision/types.ts";
 import type { ActivityLogResult } from "../decisions/activity-types.ts";
-import {
-  approveRelease,
-  getFinalDecision,
-  rejectRelease,
-} from "../decisions/final-decision-store.ts";
 import type {
   FinalDecisionMutationResult,
   FinalDecisionState,
 } from "../decisions/final-decision-types.ts";
-import {
-  getChangeRiskEvidenceByReleaseId,
-  getCiEvidenceByReleaseId,
-  getReleaseById,
-  getSecurityEvidenceByReleaseId,
-  getTestEvidenceByReleaseId,
-  RELEASES,
-} from "../releases/fixtures.ts";
+import { getActiveReleaseMode } from "../mode.ts";
+import { getReleaseProvider, type ReleaseProviderError, type ReleaseWithDecision } from "../releases/providers.ts";
 import type {
   ChangeRiskEvidence,
   CiEvidence,
-  Release,
-  ReleaseLookupResult,
-  ReleaseNotFoundError,
   SecurityEvidence,
   TestEvidence,
 } from "../releases/types.ts";
@@ -32,13 +16,17 @@ import type { WebMcpRegistrationResult, WebMcpToolContract } from "./types";
 
 const REGISTRATION_KEY = "__webMcpReleaseGateWebMcpRegistration__";
 
-type ReleaseWithDecision = Release & {
-  decision: ReleaseDecision;
-};
-
-type ListReleasesResult = {
-  releases: readonly ReleaseWithDecision[];
-};
+type ListReleasesResult =
+  | {
+      mode: "LIVE" | "DEMO";
+      releases: readonly ReleaseWithDecision[];
+      repository?: string;
+      branch?: string;
+      commitSha?: string;
+      generatedAt?: string;
+      workflowRunUrl?: string;
+    }
+  | { error: ReleaseProviderError };
 
 type ReleaseIdInput = {
   releaseId: string;
@@ -61,7 +49,7 @@ type AnalysisToolResult =
       analysis: DecisionAnalysis;
     }
   | {
-      error: ReleaseNotFoundError;
+      error: ReleaseProviderError;
     };
 
 type ToolLookupResult<T> =
@@ -70,7 +58,7 @@ type ToolLookupResult<T> =
       evidence: T;
     }
   | {
-      error: ReleaseNotFoundError;
+      error: ReleaseProviderError;
     };
 
 type GetReleaseToolResult =
@@ -78,7 +66,7 @@ type GetReleaseToolResult =
       release: ReleaseWithDecision;
     }
   | {
-      error: ReleaseNotFoundError;
+      error: ReleaseProviderError;
     };
 
 type RegistrationStore = {
@@ -321,55 +309,12 @@ function normalizeActivityLogInput(input: unknown): ActivityLogInput {
   };
 }
 
-function mapReleaseLookupResult<T>(
-  releaseId: string,
-  result: ReleaseLookupResult<T>,
-): ToolLookupResult<T> {
-  return result.ok
-    ? {
-        releaseId,
-        evidence: result.data,
-      }
-    : {
-        error: result.error,
-      };
+function getActiveProvider() {
+  return getReleaseProvider(getActiveReleaseMode());
 }
 
-function getReleaseDecision(releaseId: string): ReleaseDecision {
-  const analysis = analyzeRelease(releaseId);
-
-  return analysis.ok ? analysis.data.decision : "NO_GO";
-}
-
-function createReleaseWithDecision(release: Release): ReleaseWithDecision {
-  return {
-    ...release,
-    decision: getReleaseDecision(release.id),
-  };
-}
-
-function mapGetReleaseResult(result: ReleaseLookupResult<Release>): GetReleaseToolResult {
-  return result.ok
-    ? {
-        release: createReleaseWithDecision(result.data),
-      }
-    : {
-        error: result.error,
-      };
-}
-
-function mapAnalysisResult(releaseId: string): AnalysisToolResult {
-  const analysis = analyzeRelease(releaseId);
-
-  if (!analysis.ok) {
-    return {
-      error: analysis.error,
-    };
-  }
-
-  return {
-    analysis: analysis.data,
-  };
+function mapProviderLookup<T>(releaseId: string, result: { ok: true; data: T } | { ok: false; error: ReleaseProviderError }): ToolLookupResult<T> {
+  return result.ok ? { releaseId, evidence: result.data } : { error: result.error };
 }
 
 export function createWebMcpTools(): WebMCP.ModelContextTool[] {
@@ -390,98 +335,108 @@ export function createWebMcpTools(): WebMCP.ModelContextTool[] {
   return [
     {
       ...listReleasesTool,
-      execute: (): ListReleasesResult => ({
-        releases: RELEASES.map(createReleaseWithDecision),
-      }),
+      execute: async (): Promise<ListReleasesResult> => {
+        const result = await getActiveProvider().listReleases();
+
+        if (!result.ok) {
+          return { error: result.error };
+        }
+
+        return {
+          mode: result.mode,
+          releases: result.releases,
+          ...(result.source
+            ? {
+                repository: result.source.repository,
+                branch: result.source.branch,
+                commitSha: result.source.commitSha,
+                generatedAt: result.source.generatedAt,
+                workflowRunUrl: result.source.workflow.runUrl,
+              }
+            : {}),
+        };
+      },
     },
     {
       ...getReleaseTool,
-      execute: (input: unknown): GetReleaseToolResult => {
+      execute: async (input: unknown): Promise<GetReleaseToolResult> => {
         const { releaseId } = normalizeReleaseIdInput(input);
+        const result = await getActiveProvider().getRelease(releaseId);
 
-        return mapGetReleaseResult(getReleaseById(releaseId));
+        return result.ok ? { release: result.data } : { error: result.error };
       },
     },
     {
       ...getCiStatusTool,
-      execute: (input: unknown): ToolLookupResult<CiEvidence> => {
+      execute: async (input: unknown): Promise<ToolLookupResult<CiEvidence>> => {
         const { releaseId } = normalizeReleaseIdInput(input);
 
-        return mapReleaseLookupResult(releaseId, getCiEvidenceByReleaseId(releaseId));
+        return mapProviderLookup(releaseId, await getActiveProvider().getCiEvidence(releaseId));
       },
     },
     {
       ...getTestResultsTool,
-      execute: (input: unknown): ToolLookupResult<TestEvidence> => {
+      execute: async (input: unknown): Promise<ToolLookupResult<TestEvidence>> => {
         const { releaseId } = normalizeReleaseIdInput(input);
 
-        return mapReleaseLookupResult(
-          releaseId,
-          getTestEvidenceByReleaseId(releaseId),
-        );
+        return mapProviderLookup(releaseId, await getActiveProvider().getTestEvidence(releaseId));
       },
     },
     {
       ...getSecurityFindingsTool,
-      execute: (input: unknown): ToolLookupResult<SecurityEvidence> => {
+      execute: async (input: unknown): Promise<ToolLookupResult<SecurityEvidence>> => {
         const { releaseId } = normalizeReleaseIdInput(input);
 
-        return mapReleaseLookupResult(
-          releaseId,
-          getSecurityEvidenceByReleaseId(releaseId),
-        );
+        return mapProviderLookup(releaseId, await getActiveProvider().getSecurityEvidence(releaseId));
       },
     },
     {
       ...getChangeRiskTool,
-      execute: (input: unknown): ToolLookupResult<ChangeRiskEvidence> => {
+      execute: async (input: unknown): Promise<ToolLookupResult<ChangeRiskEvidence>> => {
         const { releaseId } = normalizeReleaseIdInput(input);
 
-        return mapReleaseLookupResult(
-          releaseId,
-          getChangeRiskEvidenceByReleaseId(releaseId),
-        );
+        return mapProviderLookup(releaseId, await getActiveProvider().getChangeRiskEvidence(releaseId));
       },
     },
     {
       ...analyzeReleaseTool,
-      execute: (input: unknown): AnalysisToolResult => {
+      execute: async (input: unknown): Promise<AnalysisToolResult> => {
         const { releaseId } = normalizeReleaseIdInput(input);
+        const result = await getActiveProvider().analyzeRelease(releaseId);
 
-        return mapAnalysisResult(releaseId);
+        return result.ok ? { analysis: result.data } : { error: result.error };
       },
     },
     {
       ...approveReleaseTool,
-      execute: (input: unknown): FinalDecisionMutationResult => {
+      execute: async (input: unknown): Promise<FinalDecisionMutationResult> => {
         const { acknowledgement, releaseId } = normalizeApproveReleaseInput(input);
 
-        return approveRelease(releaseId, acknowledgement);
+        return getActiveProvider().approveRelease(releaseId, acknowledgement);
       },
     },
     {
       ...rejectReleaseTool,
-      execute: (input: unknown): FinalDecisionMutationResult => {
+      execute: async (input: unknown): Promise<FinalDecisionMutationResult> => {
         const { reason, releaseId } = normalizeRejectReleaseInput(input);
 
-        return rejectRelease(releaseId, reason);
+        return getActiveProvider().rejectRelease(releaseId, reason);
       },
     },
     {
       ...getFinalDecisionTool,
-      execute: (input: unknown): FinalDecisionState | { error: ReleaseNotFoundError } => {
+      execute: async (input: unknown): Promise<FinalDecisionState | { error: ReleaseProviderError }> => {
         const { releaseId } = normalizeReleaseIdInput(input);
-        const release = getReleaseById(releaseId);
 
-        return release.ok ? getFinalDecision(releaseId) : { error: release.error };
+        return getActiveProvider().getFinalDecision(releaseId);
       },
     },
     {
       ...getActivityLogTool,
-      execute: (input: unknown): ActivityLogResult => {
+      execute: async (input: unknown): Promise<ActivityLogResult> => {
         const { releaseId } = normalizeActivityLogInput(input);
 
-        return getActivityLog(releaseId);
+        return getActiveProvider().getActivityLog(releaseId);
       },
     },
   ];

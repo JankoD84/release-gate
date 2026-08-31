@@ -8,16 +8,28 @@ Release Gate — Agent-native software release decisions
 
 Release Gate demonstrates how browser agents can participate in production-like software release governance through structured WebMCP capabilities without silently taking final release authority away from humans.
 
-The application turns deterministic release evidence into system recommendations while preserving explicit human control over final approval or rejection.
+The application turns release evidence into deterministic system recommendations while preserving explicit human control over final approval or rejection.
+
+## Hackathon story: Release Gate dogfoods itself
+
+Release Gate now has a LIVE mode that evaluates real release evidence from the public repository powering Release Gate itself:
+
+- Repository: `JankoD84/release-gate`
+- Branch: `main`
+- Evidence source: GitHub Actions
+
+A GitHub Actions workflow collects current tests, lint/build gate outcomes, npm dependency audit counts, and Git change surface, then publishes a public evidence JSON asset on the `live-evidence` GitHub Release. The application fetches and validates that evidence server-side through `/api/live-evidence`.
+
+DEMO mode remains available because deterministic safety states may not naturally occur during the judging window. It preserves controlled `GO`, `CONDITIONAL_GO`, and `NO_GO` scenarios without needing a live failing build or security issue.
 
 ## What WebMCP enables
 
-Through WebMCP, an agent can:
+Through the same fixed 11-tool catalog, an agent can operate against the currently active mode and:
 
 - discover releases
 - inspect CI evidence
 - inspect test evidence
-- inspect security evidence
+- inspect dependency security evidence
 - inspect change-risk evidence
 - request deterministic analysis
 - inspect final human decision
@@ -35,7 +47,10 @@ Only on explicit human intent, an agent can invoke write operations to:
 - Approval requires explicit human intent.
 - Approval requires `acknowledgement=true`.
 - `NO_GO` cannot be approved.
-- Unknown releases never silently fall back.
+- LIVE release IDs are commit-specific.
+- Stale LIVE SHA requests return `LIVE_RELEASE_NOT_CURRENT`.
+- Unknown DEMO releases return `RELEASE_NOT_FOUND`.
+- LIVE never silently falls back to DEMO.
 - Write operations are auditable.
 
 ## Demo scenarios
@@ -49,6 +64,8 @@ Only on explicit human intent, an agent can invoke write operations to:
 | E | Explicit human rejection | With explicit rejection intent, a release records a human `NO_GO` final decision while preserving the system recommendation. |
 | F | Blocked approval of `NO_GO` | Attempting to approve `2.6.0` returns `RELEASE_BLOCKED`; no approval is stored. |
 | G | Unknown release | Unknown releases return `RELEASE_NOT_FOUND` without fallback or mutation. |
+| H | Live discovery | Agent discovers and reviews the current LIVE release from real GitHub evidence. |
+| I | Live analysis without approval | Agent analyzes the current LIVE release, explains evidence, and leaves the human final decision `PENDING`. |
 
 See [AGENT_EVALS.md](AGENT_EVALS.md) for detailed prompts, expected tool behavior, forbidden behavior, and pass criteria.
 
@@ -64,6 +81,7 @@ Verifiable work in the repository history includes:
 - hardened WebMCP decision persistence and write semantics
 - added WebMCP agent evaluation coverage
 - polished the Release Gate user experience for hackathon presentation
+- added hybrid LIVE/DEMO evidence mode with real GitHub Actions evidence for the project itself
 
 The WebMCP-related extension is the core of the implementation: a browser-native tool catalog for release discovery, evidence inspection, deterministic analysis, explicit human decision writes, final-decision reads, and audit reads.
 
@@ -74,6 +92,7 @@ The WebMCP-related extension is the core of the implementation: a browser-native
 - TypeScript
 - Tailwind CSS
 - WebMCP
+- GitHub Actions evidence publication
 
 ## Running locally
 
@@ -81,12 +100,15 @@ See [README.md](README.md#local-development).
 
 ## Validation
 
-Current validation status:
+Current validation should be checked with:
 
-- 52 automated tests passing
-- lint passing
-- production build passing
-- WebMCP catalog confirmed: 11 tools total, 9 read-only, 2 write
+```bash
+npm run test
+npm run lint
+npm run build
+```
+
+The WebMCP catalog remains fixed at 11 tools total, 9 read-only, and 2 write.
 
 ## Testing-environment note
 

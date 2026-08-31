@@ -1,0 +1,200 @@
+name: release-evidence
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  evidence:
+    name: Collect and publish release evidence
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: npm ci
+        id: npm_ci
+        continue-on-error: true
+        run: npm ci
+
+      - name: Tests
+        id: tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          npm run test 2>&1 | tee test-output.txt
+
+      - name: Lint
+        id: lint
+        continue-on-error: true
+        run: npm run lint
+
+      - name: Build
+        id: build
+        continue-on-error: true
+        run: npm run build
+
+      - name: Dependency security audit
+        id: audit
+        continue-on-error: true
+        run: npm audit --json > npm-audit.json
+
+      - name: Collect Git change statistics
+        if: always()
+        run: |
+          BEFORE_SHA="${{ github.event.before }}"
+          AFTER_SHA="${{ github.sha }}"
+          if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            if git rev-parse HEAD^ >/dev/null 2>&1; then
+              BEFORE_SHA="HEAD^"
+            else
+              BEFORE_SHA="HEAD"
+            fi
+          fi
+          git diff --numstat "$BEFORE_SHA" "$AFTER_SHA" > git-numstat.txt || true
+          git diff --name-only "$BEFORE_SHA" "$AFTER_SHA" > git-files.txt || true
+
+      - name: Normalize release evidence
+        if: always()
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const sha = process.env.GITHUB_SHA;
+          const generatedAt = new Date().toISOString();
+          const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+          const step = (name) => process.env[`STEP_${name.toUpperCase()}_OUTCOME`] || 'failure';
+          const required = ['tests', 'lint', 'build'];
+          const passedRequired = required.filter((name) => step(name) === 'success').length;
+          const failedRequired = required.length - passedRequired;
+          const testOutput = fs.existsSync('test-output.txt') ? fs.readFileSync('test-output.txt', 'utf8') : '';
+          const testMatch = testOutput.match(/# tests\s+(\d+)[\s\S]*?# pass\s+(\d+)[\s\S]*?# fail\s+(\d+)/);
+          const total = testMatch ? Number(testMatch[1]) : 0;
+          const passed = testMatch ? Number(testMatch[2]) : 0;
+          const failed = testMatch ? Number(testMatch[3]) : (step('tests') === 'success' ? 0 : 1);
+          let audit = { vulnerabilities: {} };
+          try { audit = JSON.parse(fs.readFileSync('npm-audit.json', 'utf8')); } catch {}
+          const vulnerabilities = audit.vulnerabilities || {};
+          const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+          for (const value of Object.values(vulnerabilities)) {
+            const severity = value && value.severity;
+            if (severity === 'critical') counts.critical += 1;
+            else if (severity === 'high') counts.high += 1;
+            else if (severity === 'moderate') counts.medium += 1;
+            else if (severity === 'low') counts.low += 1;
+          }
+          const changedFiles = fs.existsSync('git-files.txt') ? fs.readFileSync('git-files.txt', 'utf8').split('\n').filter(Boolean) : [];
+          const numstat = fs.existsSync('git-numstat.txt') ? fs.readFileSync('git-numstat.txt', 'utf8').split('\n').filter(Boolean) : [];
+          let linesAdded = 0;
+          let linesDeleted = 0;
+          for (const line of numstat) {
+            const [added, deleted] = line.split('\t');
+            linesAdded += Number.isFinite(Number(added)) ? Number(added) : 0;
+            linesDeleted += Number.isFinite(Number(deleted)) ? Number(deleted) : 0;
+          }
+          const components = new Set();
+          for (const path of changedFiles) {
+            if (path.startsWith('src/app') || path.startsWith('src/components')) components.add('web');
+            else if (path.startsWith('src/lib/webmcp')) components.add('agent-interface');
+            else if (path.startsWith('src/lib/decision') || path.startsWith('src/lib/decisions')) components.add('release-orchestration');
+            else if (path.startsWith('src/lib/releases')) components.add('release-data');
+            else if (path.startsWith('.github')) components.add('ci');
+            else if (/^(README|HACKATHON|DEMO|AGENT_EVALS|CLAUDE|AGENTS|LICENSE)|\.md$/i.test(path)) components.add('docs');
+            else components.add('other');
+          }
+          const changedComponents = [...components].sort();
+          const totalLines = linesAdded + linesDeleted;
+          let risk = 'LOW';
+          if (changedFiles.length >= 40 || totalLines >= 1500 || changedComponents.length >= 5) risk = 'HIGH';
+          else if (changedFiles.length >= 12 || totalLines >= 400 || changedComponents.some((component) => ['release-orchestration', 'agent-interface', 'ci'].includes(component))) risk = 'MEDIUM';
+          const release = {
+            id: `live-${sha}`,
+            version: `main@${sha.slice(0, 7)}`,
+            name: 'Current live main release evidence',
+            risk,
+            updatedAt: generatedAt,
+            branch: 'main',
+            commitSha: sha,
+            evidence: {
+              ci: {
+                status: failedRequired === 0 ? 'PASS' : 'FAIL',
+                workflow: 'release-evidence',
+                totalJobs: required.length,
+                passedJobs: passedRequired,
+                failedJobs: failedRequired,
+                durationSeconds: Math.max(0, Math.round((Date.now() - Date.parse(process.env.GITHUB_RUN_STARTED_AT || generatedAt)) / 1000))
+              },
+              tests: {
+                status: step('tests') === 'success' && failed === 0 ? 'PASS' : 'FAIL',
+                total,
+                passed,
+                failed,
+                flaky: 0,
+                coveragePercent: null
+              },
+              security: {
+                status: counts.critical > 0 || counts.high > 0 ? 'FAIL' : (counts.medium > 0 ? 'WARNING' : 'PASS'),
+                ...counts
+              },
+              changeRisk: {
+                level: risk,
+                filesChanged: changedFiles.length,
+                linesAdded,
+                linesDeleted,
+                changedComponents,
+                reasons: [
+                  `${changedFiles.length} file(s) changed with ${linesAdded} line(s) added and ${linesDeleted} line(s) deleted.`,
+                  changedComponents.length > 0 ? `Changed component(s): ${changedComponents.join(', ')}.` : 'No changed components were detected.',
+                  risk === 'LOW' ? 'Small localized change surface detected.' : risk === 'MEDIUM' ? 'Moderate change surface or release-critical component changes detected.' : 'Large change surface detected from Git statistics.'
+                ]
+              }
+            }
+          };
+          const evidence = {
+            schemaVersion: 1,
+            source: 'github-actions',
+            repository: 'JankoD84/release-gate',
+            branch: 'main',
+            commitSha: sha,
+            generatedAt,
+            workflow: { name: 'release-evidence', runId: process.env.GITHUB_RUN_ID, runUrl },
+            release
+          };
+          fs.writeFileSync('release-gate-evidence.json', JSON.stringify(evidence, null, 2));
+          NODE
+        env:
+          STEP_TESTS_OUTCOME: ${{ steps.tests.outcome }}
+          STEP_LINT_OUTCOME: ${{ steps.lint.outcome }}
+          STEP_BUILD_OUTCOME: ${{ steps.build.outcome }}
+          GITHUB_RUN_STARTED_AT: ${{ github.run_started_at }}
+
+      - name: Publish live evidence release asset
+        if: always()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: live-evidence
+          name: live-evidence
+          body: Machine-generated public Release Gate live evidence. The asset JSON identifies the evaluated commit SHA.
+          files: release-gate-evidence.json
+          make_latest: false
+
+      - name: Fail workflow if required gates failed
+        if: always()
+        run: |
+          if [ "${{ steps.npm_ci.outcome }}" != "success" ] || [ "${{ steps.tests.outcome }}" != "success" ] || [ "${{ steps.lint.outcome }}" != "success" ] || [ "${{ steps.build.outcome }}" != "success" ]; then
+            echo "Required release evidence gates failed. Evidence was still published."
+            exit 1
+          fi
