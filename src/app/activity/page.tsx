@@ -55,7 +55,7 @@ export default function ActivityPage() {
         <Hero
           eyebrow="Audit trail"
           title="Activity"
-          subtitle="Auditable release decisions and controlled agent actions. Entries are recorded only from analysis and human decision activity."
+          subtitle="Auditable human release decisions and blocked approval attempts."
         />
 
         <Panel className="overflow-hidden">
@@ -67,8 +67,8 @@ export default function ActivityPage() {
           {activities.length === 0 ? (
             <div className="p-6">
               <EmptyState
-                title="No activity recorded yet"
-                body="Run an analysis or record a human decision to populate this audit trail."
+                title="No human decision activity recorded yet"
+                body="Approve, reject, or attempt a blocked approval to populate this audit trail."
               />
             </div>
           ) : (

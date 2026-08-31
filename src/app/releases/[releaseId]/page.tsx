@@ -196,6 +196,7 @@ function HumanDecisionPanel({
   setAcknowledgement: (value: boolean) => void;
 }) {
   const canApprove = analysis.decision !== "NO_GO" && acknowledgement;
+  const approveButtonLabel = analysis.decision === "NO_GO" ? "Approval blocked" : `Approve ${formatDecisionLabel(analysis.decision)}`;
 
   return (
     <Panel className="overflow-hidden">
@@ -263,7 +264,7 @@ function HumanDecisionPanel({
                 onClick={onApprove}
                 type="button"
               >
-                Approve {formatDecisionLabel(analysis.decision)}
+                {approveButtonLabel}
               </button>
               <button
                 className="rounded-full border border-rose-300/35 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:border-rose-200 hover:bg-rose-400/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-200"

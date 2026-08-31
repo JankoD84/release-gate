@@ -148,7 +148,7 @@ export default function Home() {
               subtitle="Deterministic recommendations are derived from CI, test, security, and change-risk evidence."
             />
             <div className="overflow-x-auto">
-              <table className="w-full min-w-215 text-left text-sm">
+              <table className="w-full min-w-200 text-left text-sm">
                 <thead className="bg-slate-950/70 text-xs uppercase tracking-[0.16em] text-slate-500">
                   <tr>
                     <th className="px-6 py-3 font-semibold">Release</th>

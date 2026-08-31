@@ -261,7 +261,7 @@ export function ErrorState({ code, title, body }: { code: string; title: string;
 
 export function ActivityTypeBadge({ activity }: { activity: ActivityRecord }) {
   if (activity.type === "APPROVAL" && activity.outcome === "RELEASE_BLOCKED") {
-    return <Badge tone="blocked">Blocked approval</Badge>;
+    return <Badge tone="blocked">Blocked approval / RELEASE_BLOCKED</Badge>;
   }
 
   if (activity.type === "APPROVAL") return <Badge tone="go">Approval</Badge>;
