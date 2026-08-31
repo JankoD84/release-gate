@@ -1,69 +1,139 @@
-import Image from "next/image";
+"use client";
+
+import Link from "next/link";
+
+import { useWebMcpStatus } from "@/components/webmcp/webmcp-provider";
+import { RELEASES } from "@/lib/releases/fixtures";
+import { webMcpToolCatalog } from "@/lib/webmcp/register-tools";
+
+const statusLabels = {
+  unsupported: "UNSUPPORTED",
+  registering: "REGISTERING",
+  ready: "READY",
+  error: "ERROR",
+} as const;
+
+const decisionStyles = {
+  GO: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
+  CONDITIONAL_GO: "bg-amber-50 text-amber-800 ring-amber-600/20",
+  NO_GO: "bg-rose-50 text-rose-700 ring-rose-600/20",
+} as const;
+
+const riskStyles = {
+  LOW: "bg-slate-100 text-slate-700 ring-slate-600/20",
+  MEDIUM: "bg-orange-50 text-orange-700 ring-orange-600/20",
+  HIGH: "bg-red-50 text-red-700 ring-red-600/20",
+} as const;
+
+function Badge({ children, className }: { children: string; className: string }) {
+  return (
+    <span
+      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${className}`}
+    >
+      {children}
+    </span>
+  );
+}
 
 export default function Home() {
+  const webMcpStatus = useWebMcpStatus();
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100 sm:px-10">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-8">
+        <section className="rounded-3xl border border-white/10 bg-white/3 p-8 shadow-2xl shadow-black/20">
+          <p className="mb-3 text-sm font-semibold uppercase tracking-[0.24em] text-cyan-300">
+            Phase 2 Release Evidence Surface
           </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+                WebMCP Release Gate
+              </h1>
+              <p className="mt-4 max-w-2xl text-lg text-slate-300">
+                Agent-native software release evidence with human control.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+              <p className="text-sm text-slate-400">WebMCP status</p>
+              <p className="mt-1 text-2xl font-semibold text-cyan-200">
+                {statusLabels[webMcpStatus]}
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-4 md:grid-cols-[1fr_320px]">
+          <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white text-slate-950 shadow-xl shadow-black/10">
+            <div className="border-b border-slate-200 px-6 py-5">
+              <h2 className="text-xl font-semibold">Synthetic releases</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Deterministic demo data returned by the WebMCP release tools.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-6 py-3 font-semibold">Version</th>
+                    <th className="px-6 py-3 font-semibold">Decision</th>
+                    <th className="px-6 py-3 font-semibold">Risk</th>
+                    <th className="px-6 py-3 font-semibold">Details</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {RELEASES.map((release) => (
+                    <tr key={release.id}>
+                      <td className="px-6 py-4">
+                        <div className="font-semibold">{release.version}</div>
+                        <div className="text-xs text-slate-500">{release.name}</div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <Badge className={decisionStyles[release.decision]}>
+                          {release.decision}
+                        </Badge>
+                      </td>
+                      <td className="px-6 py-4">
+                        <Badge className={riskStyles[release.risk]}>
+                          {release.risk}
+                        </Badge>
+                      </td>
+                      <td className="px-6 py-4">
+                        <Link
+                          className="font-semibold text-cyan-700 underline-offset-4 hover:underline"
+                          href={`/releases/${release.id}`}
+                        >
+                          View evidence
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <aside className="rounded-3xl border border-white/10 bg-white/4 p-6 text-slate-100">
+            <p className="text-sm text-slate-400">Available WebMCP tools</p>
+            <p className="mt-2 text-4xl font-semibold">
+              {webMcpToolCatalog.length}
+            </p>
+            <div className="mt-5 flex flex-col gap-3">
+              {webMcpToolCatalog.map((tool) => (
+                <div
+                  className="rounded-2xl bg-slate-900 p-4 ring-1 ring-white/10"
+                  key={tool.name}
+                >
+                  <p className="font-mono text-sm text-cyan-200">{tool.name}</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                    {tool.description}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </aside>
+        </section>
+      </div>
+    </main>
   );
 }
