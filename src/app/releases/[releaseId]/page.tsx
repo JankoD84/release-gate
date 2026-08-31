@@ -2,9 +2,17 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useEffect, useState } from "react";
 
 import { analyzeRelease } from "@/lib/decision/engine";
 import type { DecisionAnalysis, DecisionEvidenceItem } from "@/lib/decision/types";
+import {
+  approveRelease,
+  getFinalDecision,
+  rejectRelease,
+  subscribeToFinalDecisionChanges,
+} from "@/lib/decisions/final-decision-store";
+import type { FinalDecisionState } from "@/lib/decisions/final-decision-types";
 import { getReleaseRecordById } from "@/lib/releases/fixtures";
 import type { ReleaseRecord } from "@/lib/releases/types";
 
@@ -12,6 +20,7 @@ const decisionStyles = {
   GO: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
   CONDITIONAL_GO: "bg-amber-50 text-amber-800 ring-amber-600/20",
   NO_GO: "bg-rose-50 text-rose-700 ring-rose-600/20",
+  PENDING: "bg-slate-100 text-slate-700 ring-slate-600/20",
 } as const;
 
 const riskStyles = {
@@ -101,6 +110,52 @@ function ReleaseDetail({
   release: ReleaseRecord;
 }) {
   const { evidence } = release;
+  const [acknowledgement, setAcknowledgement] = useState(false);
+  const [decisionState, setDecisionState] = useState<FinalDecisionState>({
+    releaseId: release.id,
+    status: "PENDING",
+  });
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const finalDecision =
+    decisionState.status === "DECIDED"
+      ? decisionState.decision.finalDecision
+      : "PENDING";
+  const canApprove = analysis.decision !== "NO_GO" && acknowledgement;
+
+  useEffect(() => {
+    const refreshDecision = () => setDecisionState(getFinalDecision(release.id));
+
+    refreshDecision();
+
+    return subscribeToFinalDecisionChanges(refreshDecision);
+  }, [release.id]);
+
+  function handleApprove() {
+    const result = approveRelease(release.id, acknowledgement);
+
+    if (result.ok) {
+      setDecisionState(getFinalDecision(release.id));
+      setActionMessage(`Human final decision recorded: ${result.decision.finalDecision}.`);
+      return;
+    }
+
+    setActionMessage(`${result.error.code}: ${result.error.message}`);
+  }
+
+  function handleReject() {
+    const result = rejectRelease(
+      release.id,
+      "Human rejected from release detail UI.",
+    );
+
+    if (result.ok) {
+      setDecisionState(getFinalDecision(release.id));
+      setActionMessage("Human final decision recorded: NO_GO.");
+      return;
+    }
+
+    setActionMessage(`${result.error.code}: ${result.error.message}`);
+  }
 
   return (
     <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100 sm:px-10">
@@ -147,7 +202,7 @@ function ReleaseDetail({
           </div>
         </header>
 
-        <EvidenceSection title="Decision Analysis">
+        <EvidenceSection title="System Recommendation">
           <div className="mb-5 flex flex-wrap gap-3">
             <Badge className={decisionStyles[analysis.decision]}>
               {analysis.decision}
@@ -175,6 +230,78 @@ function ReleaseDetail({
               <div className="mt-3">
                 <ConditionsList conditions={analysis.conditions} />
               </div>
+            </div>
+          </div>
+        </EvidenceSection>
+
+        <EvidenceSection title="Human Final Decision">
+          <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Human decision
+              </p>
+              <div className="mt-3">
+                <Badge className={decisionStyles[finalDecision]}>{finalDecision}</Badge>
+              </div>
+              {decisionState.status === "DECIDED" ? (
+                <dl className="mt-5 grid gap-3 text-sm text-slate-600">
+                  <div>
+                    <dt className="font-semibold text-slate-800">Recorded by</dt>
+                    <dd className="capitalize">{decisionState.decision.actor}</dd>
+                  </div>
+                  <div>
+                    <dt className="font-semibold text-slate-800">Timestamp</dt>
+                    <dd>{decisionState.decision.decidedAt}</dd>
+                  </div>
+                  <div>
+                    <dt className="font-semibold text-slate-800">Reason</dt>
+                    <dd>{decisionState.decision.reason}</dd>
+                  </div>
+                </dl>
+              ) : (
+                <p className="mt-4 text-sm leading-6 text-slate-600">
+                  Pending explicit human authority. The system recommendation is not an approval.
+                </p>
+              )}
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+              <p className="font-semibold text-slate-950">Human authority actions</p>
+              <label className="mt-4 flex gap-3 text-sm leading-6 text-slate-600">
+                <input
+                  checked={acknowledgement}
+                  className="mt-1 h-4 w-4"
+                  onChange={(event) => setAcknowledgement(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>
+                  I acknowledge the displayed system recommendation and release evidence before approving.
+                </span>
+              </label>
+              {analysis.decision === "NO_GO" ? (
+                <p className="mt-3 text-sm font-semibold text-rose-700">
+                  Approval is unavailable because NO_GO is hard-blocked.
+                </p>
+              ) : null}
+              <div className="mt-5 flex flex-wrap gap-3">
+                <button
+                  className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                  disabled={!canApprove}
+                  onClick={handleApprove}
+                  type="button"
+                >
+                  Approve
+                </button>
+                <button
+                  className="rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white"
+                  onClick={handleReject}
+                  type="button"
+                >
+                  Reject
+                </button>
+              </div>
+              {actionMessage ? (
+                <p className="mt-4 text-sm leading-6 text-slate-700">{actionMessage}</p>
+              ) : null}
             </div>
           </div>
         </EvidenceSection>

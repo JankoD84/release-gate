@@ -1,5 +1,16 @@
 import { analyzeRelease } from "@/lib/decision/engine";
 import type { DecisionAnalysis, ReleaseDecision } from "@/lib/decision/types";
+import { addActivity, getActivityLog } from "@/lib/decisions/activity-store";
+import type { ActivityLogResult } from "@/lib/decisions/activity-types";
+import {
+  approveRelease,
+  getFinalDecision,
+  rejectRelease,
+} from "@/lib/decisions/final-decision-store";
+import type {
+  FinalDecisionMutationResult,
+  FinalDecisionState,
+} from "@/lib/decisions/final-decision-types";
 import {
   getChangeRiskEvidenceByReleaseId,
   getCiEvidenceByReleaseId,
@@ -31,6 +42,18 @@ type ListReleasesResult = {
 
 type ReleaseIdInput = {
   releaseId: string;
+};
+
+type ApproveReleaseInput = ReleaseIdInput & {
+  acknowledgement: boolean;
+};
+
+type RejectReleaseInput = ReleaseIdInput & {
+  reason?: string;
+};
+
+type ActivityLogInput = {
+  releaseId?: string;
 };
 
 type AnalysisToolResult =
@@ -83,6 +106,45 @@ const releaseIdInputSchema = {
     },
   },
   required: ["releaseId"],
+  additionalProperties: false,
+} as const;
+
+const approveReleaseInputSchema = {
+  type: "object",
+  properties: {
+    releaseId: {
+      type: "string",
+    },
+    acknowledgement: {
+      type: "boolean",
+    },
+  },
+  required: ["releaseId", "acknowledgement"],
+  additionalProperties: false,
+} as const;
+
+const rejectReleaseInputSchema = {
+  type: "object",
+  properties: {
+    releaseId: {
+      type: "string",
+    },
+    reason: {
+      type: "string",
+    },
+  },
+  required: ["releaseId"],
+  additionalProperties: false,
+} as const;
+
+const activityLogInputSchema = {
+  type: "object",
+  properties: {
+    releaseId: {
+      type: "string",
+    },
+  },
+  required: [],
   additionalProperties: false,
 } as const;
 
@@ -144,8 +206,44 @@ export const webMcpToolCatalog = [
   {
     name: "analyze_release",
     description:
-      "Analyze software release evidence and return a deterministic GO, CONDITIONAL GO, or NO GO recommendation with blockers, warnings, and conditions.",
+      "Analyze software release evidence and return a deterministic GO, CONDITIONAL GO, or NO GO system recommendation with blockers, warnings, and conditions. This does not record human approval.",
     inputSchema: releaseIdInputSchema,
+    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "approve_release",
+    description:
+      "Record explicit human approval for a release after reviewing the current release recommendation and evidence.",
+    inputSchema: approveReleaseInputSchema,
+    annotations: {
+      readOnlyHint: false,
+    },
+  },
+  {
+    name: "reject_release",
+    description:
+      "Record an explicit human rejection of a software release and preserve the decision in the audit trail.",
+    inputSchema: rejectReleaseInputSchema,
+    annotations: {
+      readOnlyHint: false,
+    },
+  },
+  {
+    name: "get_final_decision",
+    description:
+      "Get the recorded human final decision for a specific software release. Missing human decisions are returned as PENDING, not implicit approval.",
+    inputSchema: releaseIdInputSchema,
+    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "get_activity_log",
+    description:
+      "Get recent release analysis and human decision activity recorded by the Release Gate.",
+    inputSchema: activityLogInputSchema,
     annotations: {
       readOnlyHint: true,
     },
@@ -180,6 +278,46 @@ function normalizeReleaseIdInput(input: unknown): ReleaseIdInput {
 
   return {
     releaseId: "",
+  };
+}
+
+function normalizeApproveReleaseInput(input: unknown): ApproveReleaseInput {
+  const { releaseId } = normalizeReleaseIdInput(input);
+
+  return {
+    releaseId,
+    acknowledgement:
+      typeof input === "object" &&
+      input !== null &&
+      "acknowledgement" in input &&
+      input.acknowledgement === true,
+  };
+}
+
+function normalizeRejectReleaseInput(input: unknown): RejectReleaseInput {
+  const { releaseId } = normalizeReleaseIdInput(input);
+
+  return {
+    releaseId,
+    reason:
+      typeof input === "object" &&
+      input !== null &&
+      "reason" in input &&
+      typeof input.reason === "string"
+        ? input.reason
+        : undefined,
+  };
+}
+
+function normalizeActivityLogInput(input: unknown): ActivityLogInput {
+  return {
+    releaseId:
+      typeof input === "object" &&
+      input !== null &&
+      "releaseId" in input &&
+      typeof input.releaseId === "string"
+        ? input.releaseId
+        : undefined,
   };
 }
 
@@ -223,13 +361,25 @@ function mapGetReleaseResult(result: ReleaseLookupResult<Release>): GetReleaseTo
 function mapAnalysisResult(releaseId: string): AnalysisToolResult {
   const analysis = analyzeRelease(releaseId);
 
-  return analysis.ok
-    ? {
-        analysis: analysis.data,
-      }
-    : {
-        error: analysis.error,
-      };
+  if (!analysis.ok) {
+    return {
+      error: analysis.error,
+    };
+  }
+
+  addActivity({
+    timestamp: analysis.data.evaluatedAt,
+    type: "ANALYSIS",
+    releaseId,
+    toolName: "analyze_release",
+    outcome: "SUCCESS",
+    summary: `System recommendation is ${analysis.data.decision}.`,
+    recommendation: analysis.data.decision,
+  });
+
+  return {
+    analysis: analysis.data,
+  };
 }
 
 function createWebMcpTools(): WebMCP.ModelContextTool[] {
@@ -241,6 +391,10 @@ function createWebMcpTools(): WebMCP.ModelContextTool[] {
     getSecurityFindingsTool,
     getChangeRiskTool,
     analyzeReleaseTool,
+    approveReleaseTool,
+    rejectReleaseTool,
+    getFinalDecisionTool,
+    getActivityLogTool,
   ] = webMcpToolCatalog;
 
   return [
@@ -305,6 +459,39 @@ function createWebMcpTools(): WebMCP.ModelContextTool[] {
         const { releaseId } = normalizeReleaseIdInput(input);
 
         return mapAnalysisResult(releaseId);
+      },
+    },
+    {
+      ...approveReleaseTool,
+      execute: (input: unknown): FinalDecisionMutationResult => {
+        const { acknowledgement, releaseId } = normalizeApproveReleaseInput(input);
+
+        return approveRelease(releaseId, acknowledgement);
+      },
+    },
+    {
+      ...rejectReleaseTool,
+      execute: (input: unknown): FinalDecisionMutationResult => {
+        const { reason, releaseId } = normalizeRejectReleaseInput(input);
+
+        return rejectRelease(releaseId, reason);
+      },
+    },
+    {
+      ...getFinalDecisionTool,
+      execute: (input: unknown): FinalDecisionState | { error: ReleaseNotFoundError } => {
+        const { releaseId } = normalizeReleaseIdInput(input);
+        const release = getReleaseById(releaseId);
+
+        return release.ok ? getFinalDecision(releaseId) : { error: release.error };
+      },
+    },
+    {
+      ...getActivityLogTool,
+      execute: (input: unknown): ActivityLogResult => {
+        const { releaseId } = normalizeActivityLogInput(input);
+
+        return getActivityLog(releaseId);
       },
     },
   ];

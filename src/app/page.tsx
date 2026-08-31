@@ -1,9 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 
 import { useWebMcpStatus } from "@/components/webmcp/webmcp-provider";
 import { analyzeRelease } from "@/lib/decision/engine";
+import type { ReleaseDecision } from "@/lib/decision/types";
+import { resetDemoState } from "@/lib/decisions/demo-state";
+import {
+  getFinalDecision,
+  subscribeToFinalDecisionChanges,
+} from "@/lib/decisions/final-decision-store";
 import { RELEASES } from "@/lib/releases/fixtures";
 import { webMcpToolCatalog } from "@/lib/webmcp/register-tools";
 
@@ -18,7 +25,10 @@ const decisionStyles = {
   GO: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
   CONDITIONAL_GO: "bg-amber-50 text-amber-800 ring-amber-600/20",
   NO_GO: "bg-rose-50 text-rose-700 ring-rose-600/20",
+  PENDING: "bg-slate-100 text-slate-700 ring-slate-600/20",
 } as const;
+
+type HumanDecisionLabel = ReleaseDecision | "PENDING";
 
 const releasesWithAnalysis = RELEASES.map((release) => {
   const analysis = analyzeRelease(release.id);
@@ -47,6 +57,36 @@ function Badge({ children, className }: { children: string; className: string })
 
 export default function Home() {
   const webMcpStatus = useWebMcpStatus();
+  const [finalDecisions, setFinalDecisions] = useState<Record<string, HumanDecisionLabel>>({});
+
+  useEffect(() => {
+    const refreshFinalDecisions = () => {
+      setFinalDecisions(
+        Object.fromEntries(
+          RELEASES.map((release) => {
+            const finalDecisionState = getFinalDecision(release.id);
+
+            return [
+              release.id,
+              finalDecisionState.status === "DECIDED"
+                ? finalDecisionState.decision.finalDecision
+                : "PENDING",
+            ];
+          }),
+        ),
+      );
+    };
+
+    refreshFinalDecisions();
+
+    return subscribeToFinalDecisionChanges(refreshFinalDecisions);
+  }, []);
+
+  function handleResetDemoState() {
+    if (window.confirm("Reset demo state? This clears final decisions and activity.")) {
+      resetDemoState();
+    }
+  }
 
   return (
     <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100 sm:px-10">
@@ -80,19 +120,29 @@ export default function Home() {
               <p className="mt-1 text-sm text-slate-500">
                 Deterministic demo data returned by the WebMCP release tools.
               </p>
+              <Link
+                className="mt-3 inline-flex font-semibold text-cyan-700 underline-offset-4 hover:underline"
+                href="/activity"
+              >
+                View activity audit trail
+              </Link>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-6 py-3 font-semibold">Version</th>
-                    <th className="px-6 py-3 font-semibold">Decision</th>
+                    <th className="px-6 py-3 font-semibold">System recommendation</th>
+                    <th className="px-6 py-3 font-semibold">Human final decision</th>
                     <th className="px-6 py-3 font-semibold">Risk</th>
                     <th className="px-6 py-3 font-semibold">Details</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {releasesWithAnalysis.map(({ analysis, release }) => (
+                  {releasesWithAnalysis.map(({ analysis, release }) => {
+                    const finalDecision = finalDecisions[release.id] ?? "PENDING";
+
+                    return (
                     <tr key={release.id}>
                       <td className="px-6 py-4">
                         <div className="font-semibold">{release.version}</div>
@@ -108,6 +158,11 @@ export default function Home() {
                         )}
                       </td>
                       <td className="px-6 py-4">
+                        <Badge className={decisionStyles[finalDecision]}>
+                          {finalDecision}
+                        </Badge>
+                      </td>
+                      <td className="px-6 py-4">
                         <Badge className={riskStyles[release.risk]}>
                           {release.risk}
                         </Badge>
@@ -121,7 +176,8 @@ export default function Home() {
                         </Link>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -133,6 +189,13 @@ export default function Home() {
               {webMcpToolCatalog.length}
             </p>
             <div className="mt-5 flex flex-col gap-3">
+              <button
+                className="rounded-full border border-cyan-300/40 px-4 py-2 text-sm font-semibold text-cyan-100 hover:border-cyan-200 hover:bg-cyan-300/10"
+                onClick={handleResetDemoState}
+                type="button"
+              >
+                Reset demo state
+              </button>
               {webMcpToolCatalog.map((tool) => (
                 <div
                   className="rounded-2xl bg-slate-900 p-4 ring-1 ring-white/10"
