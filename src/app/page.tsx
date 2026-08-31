@@ -191,7 +191,7 @@ export default function Home() {
               <MetricCard label="Pending human decisions" tone="pending" value={summary.pending} />
             </section>
 
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="grid gap-6 min-[1400px]:grid-cols-[minmax(0,1fr)_340px]">
               <Panel className="overflow-hidden">
                 <SectionHeader
                   title={state.mode === "LIVE" ? "Live repository" : "Releases"}
@@ -202,69 +202,118 @@ export default function Home() {
                 {state.status === "loading" ? (
                   <p className="p-6 text-sm text-slate-300">Loading release evidence…</p>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-200 text-left text-sm">
-                      <thead className="bg-slate-950/70 text-xs uppercase tracking-[0.16em] text-slate-500">
-                        <tr>
-                          <th className="px-6 py-3 font-semibold">Release</th>
-                          <th className="px-6 py-3 font-semibold">Branch</th>
-                          <th className="px-6 py-3 font-semibold">Risk</th>
-                          <th className="px-6 py-3 font-semibold">System Recommendation</th>
-                          <th className="px-6 py-3 font-semibold">Human Decision</th>
-                          <th className="px-6 py-3 font-semibold">Updated</th>
-                          <th className="px-6 py-3 font-semibold">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800">
-                        {state.releases.map((release) => {
-                          const finalDecision = finalDecisions[release.id] ?? "PENDING";
+                  <>
+                    <div className="grid gap-3 p-4 lg:hidden">
+                      {state.releases.map((release) => {
+                        const finalDecision = finalDecisions[release.id] ?? "PENDING";
 
-                          return (
-                            <tr className="transition hover:bg-slate-800/45" key={release.id}>
-                              <td className="px-6 py-5">
+                        return (
+                          <article className="rounded-2xl border border-slate-800 bg-slate-950/45 p-4" key={release.id}>
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                                  Release
+                                </p>
                                 <Link
-                                  className="font-semibold text-white underline-offset-4 hover:text-cyan-100 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                                  className="mt-1 inline-flex font-semibold text-white underline-offset-4 hover:text-cyan-100 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
                                   href={`/releases/${release.id}`}
                                 >
                                   {state.mode === "LIVE" ? shortSha(release.commitSha) : release.version}
                                 </Link>
-                                <div className="mt-1 text-xs text-slate-500">{release.name}</div>
-                              </td>
-                              <td className="px-6 py-5 font-mono text-xs text-slate-300">{release.branch}</td>
-                              <td className="px-6 py-5">
-                                <Badge tone={riskTone(release.risk)}>{release.risk}</Badge>
-                              </td>
-                              <td className="px-6 py-5">
-                                <p className="mb-2 text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                  System recommendation
-                                </p>
-                                <Badge tone={decisionTone(release.decision)}>
-                                  {formatDecisionLabel(release.decision)}
-                                </Badge>
-                              </td>
-                              <td className="px-6 py-5">
-                                <p className="mb-2 text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                  Human final decision
-                                </p>
-                                <Badge tone={decisionTone(finalDecision)}>
-                                  {formatDecisionLabel(finalDecision)}
-                                </Badge>
-                              </td>
-                              <td className="px-6 py-5 text-slate-300">{formatDate(release.updatedAt)}</td>
-                              <td className="px-6 py-5">
-                                <Link
-                                  className="inline-flex rounded-full border border-cyan-300/30 px-3 py-1.5 text-sm font-semibold text-cyan-100 transition hover:border-cyan-200 hover:bg-cyan-300/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
-                                  href={`/releases/${release.id}`}
-                                >
-                                  View
-                                </Link>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                                <p className="mt-1 text-xs leading-5 text-slate-500">{release.name}</p>
+                              </div>
+                              <Link
+                                className="inline-flex rounded-full border border-cyan-300/30 px-3 py-1.5 text-sm font-semibold text-cyan-100 transition hover:border-cyan-200 hover:bg-cyan-300/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                                href={`/releases/${release.id}`}
+                              >
+                                View
+                              </Link>
+                            </div>
+                            <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                              <div>
+                                <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Branch</dt>
+                                <dd className="mt-1 font-mono text-xs text-slate-300">{release.branch}</dd>
+                              </div>
+                              <div>
+                                <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Risk</dt>
+                                <dd className="mt-1"><Badge tone={riskTone(release.risk)}>{release.risk}</Badge></dd>
+                              </div>
+                              <div>
+                                <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">System Recommendation</dt>
+                                <dd className="mt-1"><Badge tone={decisionTone(release.decision)}>{formatDecisionLabel(release.decision)}</Badge></dd>
+                              </div>
+                              <div>
+                                <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Human Decision</dt>
+                                <dd className="mt-1"><Badge tone={decisionTone(finalDecision)}>{formatDecisionLabel(finalDecision)}</Badge></dd>
+                              </div>
+                              <div>
+                                <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Updated</dt>
+                                <dd className="mt-1 text-slate-300">{formatDate(release.updatedAt)}</dd>
+                              </div>
+                            </dl>
+                          </article>
+                        );
+                      })}
+                    </div>
+
+                    <div className="hidden lg:block">
+                      <table className="w-full table-auto text-left text-sm">
+                        <thead className="bg-slate-950/70 text-xs uppercase tracking-[0.12em] text-slate-500">
+                          <tr>
+                            <th className="px-3 py-3 font-semibold sm:px-4">Release</th>
+                            <th className="px-3 py-3 font-semibold sm:px-4">Branch</th>
+                            <th className="px-3 py-3 font-semibold sm:px-4">Risk</th>
+                            <th className="px-3 py-3 font-semibold sm:px-4">System Recommendation</th>
+                            <th className="px-3 py-3 font-semibold sm:px-4">Human Decision</th>
+                            <th className="px-3 py-3 font-semibold sm:px-4">Updated</th>
+                            <th className="px-3 py-3 font-semibold sm:px-4">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800">
+                          {state.releases.map((release) => {
+                            const finalDecision = finalDecisions[release.id] ?? "PENDING";
+
+                            return (
+                              <tr className="transition hover:bg-slate-800/45" key={release.id}>
+                                <td className="px-3 py-4 sm:px-4">
+                                  <Link
+                                    className="font-semibold text-white underline-offset-4 hover:text-cyan-100 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                                    href={`/releases/${release.id}`}
+                                  >
+                                    {state.mode === "LIVE" ? shortSha(release.commitSha) : release.version}
+                                  </Link>
+                                  <div className="mt-1 text-xs text-slate-500">{release.name}</div>
+                                </td>
+                                <td className="px-3 py-4 font-mono text-xs text-slate-300 sm:px-4">{release.branch}</td>
+                                <td className="px-3 py-4 sm:px-4">
+                                  <Badge tone={riskTone(release.risk)}>{release.risk}</Badge>
+                                </td>
+                                <td className="px-3 py-4 sm:px-4">
+                                  <Badge tone={decisionTone(release.decision)}>
+                                    {formatDecisionLabel(release.decision)}
+                                  </Badge>
+                                </td>
+                                <td className="px-3 py-4 sm:px-4">
+                                  <Badge tone={decisionTone(finalDecision)}>
+                                    {formatDecisionLabel(finalDecision)}
+                                  </Badge>
+                                </td>
+                                <td className="px-3 py-4 text-slate-300 sm:px-4">{formatDate(release.updatedAt)}</td>
+                                <td className="px-3 py-4 sm:px-4">
+                                  <Link
+                                    className="inline-flex rounded-full border border-cyan-300/30 px-3 py-1.5 text-sm font-semibold text-cyan-100 transition hover:border-cyan-200 hover:bg-cyan-300/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                                    href={`/releases/${release.id}`}
+                                  >
+                                    View
+                                  </Link>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
                 )}
               </Panel>
 

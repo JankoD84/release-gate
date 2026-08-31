@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Agent-native software release decisions with human control.",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
