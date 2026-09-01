@@ -134,7 +134,9 @@ The workflow publishes a public GitHub Release asset:
 - Release tag: `live-evidence`
 - Asset: `release-gate-evidence.json`
 
-The app fetches this public asset server-side through `GET /api/live-evidence`, validates it strictly, and returns only normalized safe evidence. For other selected public repositories, the same route constructs official GitHub or GitLab API URLs from the validated repository identity. It never proxies arbitrary user-supplied URLs. No browser GitHub/GitLab token is required, and no provider token is stored in Vercel.
+The app fetches this public asset server-side through `GET /api/live-evidence`, validates it strictly, and returns only normalized safe evidence. For other selected public repositories, the same route constructs official GitHub or GitLab API URLs from the validated repository identity. It never proxies arbitrary user-supplied URLs. No browser GitHub/GitLab token is required.
+
+For production deployments, `GITHUB_TOKEN` is optional but recommended to improve reliability against GitHub public REST API rate limits. It is read server-side only for `api.github.com` requests, used only for read-only public repository evidence, and is never returned to the browser, WebMCP tools, logs, Decision Packets, or page source. If `GITHUB_TOKEN` is absent, anonymous public-repository behavior remains available. Users do not enter or store credentials in the app.
 
 ## Bootstrap process
 

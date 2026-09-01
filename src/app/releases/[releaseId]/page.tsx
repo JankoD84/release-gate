@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   AppShell,
@@ -31,6 +31,7 @@ import {
 import type { FinalDecisionState } from "@/lib/decisions/final-decision-types";
 import { getActiveReleaseMode, subscribeToReleaseModeChanges, type ReleaseMode } from "@/lib/mode";
 import type { PublicRepositorySnapshot } from "@/lib/releases/public-adapters";
+import { normalizeReleaseIdRouteParam } from "@/lib/releases/release-id";
 import { getActiveRepositoryReference, subscribeToRepositoryChanges, type RepositoryReference } from "@/lib/releases/repository";
 import { getReleaseProvider, type ReleaseProviderError } from "@/lib/releases/providers";
 import type { EvidenceProvenance, ReleaseRecord } from "@/lib/releases/types";
@@ -330,9 +331,11 @@ function coverageLabel(value: number | null): string {
 
 export default function ReleaseDetailPage() {
   const params = useParams<{ releaseId: string }>();
+  const routeReleaseId = useMemo(() => normalizeReleaseIdRouteParam(params.releaseId), [params.releaseId]);
+  const releaseId = routeReleaseId.ok ? routeReleaseId.releaseId : "";
   const webMcpStatus = useWebMcpStatus();
   const [acknowledgement, setAcknowledgement] = useState(false);
-  const [decisionState, setDecisionState] = useState<FinalDecisionState>({ releaseId: params.releaseId, status: "PENDING" });
+  const [decisionState, setDecisionState] = useState<FinalDecisionState>({ releaseId, status: "PENDING" });
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [resetMessage, setResetMessage] = useState<string | null>(null);
   const [state, setState] = useState<DetailState>({ status: "loading", mode: "LIVE" });
@@ -345,14 +348,20 @@ export default function ReleaseDetailPage() {
       const provider = getReleaseProvider(mode);
       const repository = mode === "LIVE" ? getActiveRepositoryReference() : undefined;
       setState({ status: "loading", mode });
-      const release = await provider.getReleaseRecord(params.releaseId);
+
+      if (!routeReleaseId.ok) {
+        if (!cancelled) setState({ status: "error", mode, error: routeReleaseId.error });
+        return;
+      }
+
+      const release = await provider.getReleaseRecord(routeReleaseId.releaseId);
 
       if (!release.ok) {
         if (!cancelled) setState({ status: "error", mode, error: release.error });
         return;
       }
 
-      const analysis = await provider.analyzeRelease(params.releaseId);
+      const analysis = await provider.analyzeRelease(routeReleaseId.releaseId);
       const list = mode === "LIVE" ? await provider.listReleases() : undefined;
 
       if (cancelled) return;
@@ -372,14 +381,14 @@ export default function ReleaseDetailPage() {
       unsubscribeMode();
       unsubscribeRepository();
     };
-  }, [params.releaseId]);
+  }, [routeReleaseId]);
 
   useEffect(() => {
-    const refreshDecision = () => setDecisionState(getFinalDecision(params.releaseId));
+    const refreshDecision = () => setDecisionState(routeReleaseId.ok ? getFinalDecision(routeReleaseId.releaseId) : { releaseId, status: "PENDING" });
 
     refreshDecision();
     return subscribeToFinalDecisionChanges(refreshDecision);
-  }, [params.releaseId]);
+  }, [releaseId, routeReleaseId]);
 
   function handleResetDemoState() {
     if (window.confirm("Reset local decisions? This clears browser-local final decisions and activity only.")) {

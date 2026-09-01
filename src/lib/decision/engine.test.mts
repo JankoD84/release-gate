@@ -247,8 +247,8 @@ test("duplicate blocker and warning inputs do not duplicate actions", () => {
 });
 
 test("provider-equivalent normalized evidence produces equivalent required actions", () => {
-  const github = evaluateReleaseEvidence("github:example%2Fproject:v1", { ...cleanEvidence, tests: { ...cleanEvidence.tests, status: "NOT_AVAILABLE" } }, { evaluatedAt });
-  const gitlab = evaluateReleaseEvidence("gitlab:example%2Fproject:v1", { ...cleanEvidence, tests: { ...cleanEvidence.tests, status: "NOT_AVAILABLE" } }, { evaluatedAt });
+  const github = evaluateReleaseEvidence("github:example/project:v1", { ...cleanEvidence, tests: { ...cleanEvidence.tests, status: "NOT_AVAILABLE" } }, { evaluatedAt });
+  const gitlab = evaluateReleaseEvidence("gitlab:example/project:v1", { ...cleanEvidence, tests: { ...cleanEvidence.tests, status: "NOT_AVAILABLE" } }, { evaluatedAt });
 
   assert.deepEqual(github.requiredActions, gitlab.requiredActions);
 });

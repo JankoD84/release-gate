@@ -1,4 +1,5 @@
 import { analyzeReleaseRecord } from "../decision/engine.ts";
+import { createCanonicalReleaseId } from "./release-id.ts";
 import type { RepositoryProvider, RepositoryReference } from "./repository.ts";
 import { DEFAULT_PUBLIC_REPOSITORY_URL } from "./repository.ts";
 import {
@@ -47,6 +48,11 @@ export type PublicRepositorySnapshot = {
 };
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+type FetchJsonResult = { ok: true; data: unknown } | { ok: false; error: PublicRepositoryError };
+type CachedFetchJsonResult = {
+  expiresAt: number;
+  promise: Promise<FetchJsonResult>;
+};
 
 type NormalizedCandidate = {
   type: ReleaseCandidateType;
@@ -70,6 +76,30 @@ const githubHeaders = {
   "User-Agent": "release-gate-public-repository",
 };
 
+const GITHUB_PROVIDER_CACHE_TTL_MS = 45_000;
+const githubProviderCaches = new WeakMap<FetchLike, Map<string, CachedFetchJsonResult>>();
+
+function getServerGithubToken(): string | null {
+  const token = typeof process !== "undefined" ? process.env.GITHUB_TOKEN?.trim() : undefined;
+  return token ? token : null;
+}
+
+function githubRequestInit(): RequestInit {
+  const token = getServerGithubToken();
+
+  return {
+    headers: {
+      ...githubHeaders,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    next: { revalidate: 45 },
+  };
+}
+
+function githubCacheKey(url: string): string {
+  return `${getServerGithubToken() ? "github-auth" : "github-anon"}:${url}`;
+}
+
 const gitlabHeaders = {
   Accept: "application/json",
   "User-Agent": "release-gate-public-repository",
@@ -79,8 +109,32 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function providerError(code: PublicRepositoryError["code"], message: string, status?: number): PublicRepositoryError {
-  return { code, message, ...(status ? { status } : {}) };
+function providerError(
+  code: PublicRepositoryError["code"],
+  message: string,
+  status?: number,
+  metadata: Pick<PublicRepositoryError, "rateLimitResetAt" | "retryAfterSeconds"> = {},
+): PublicRepositoryError {
+  return { code, message, ...(status ? { status } : {}), ...metadata };
+}
+
+function parseRateLimitReset(reset: string | null): Pick<PublicRepositoryError, "rateLimitResetAt" | "retryAfterSeconds"> {
+  if (!reset) return {};
+
+  const seconds = Number.parseInt(reset, 10);
+  if (!Number.isFinite(seconds) || seconds <= 0) return {};
+
+  const resetAtMs = seconds * 1000;
+  return {
+    rateLimitResetAt: new Date(resetAtMs).toISOString(),
+    retryAfterSeconds: Math.max(0, Math.ceil((resetAtMs - Date.now()) / 1000)),
+  };
+}
+
+function formatRateLimitMessage(provider: RepositoryProvider, metadata: Pick<PublicRepositoryError, "rateLimitResetAt">): string {
+  return metadata.rateLimitResetAt
+    ? `Public ${provider} API rate limit exceeded. Try again after ${metadata.rateLimitResetAt}.`
+    : `Public ${provider} API rate limit exceeded. Try again later.`;
 }
 
 export function mapProviderResponseError(provider: RepositoryProvider, response: Response, evidenceEndpoint = false): PublicRepositoryError {
@@ -98,7 +152,8 @@ export function mapProviderResponseError(provider: RepositoryProvider, response:
     const rateRemaining = response.headers.get(provider === "github" ? "x-ratelimit-remaining" : "ratelimit-remaining");
     const reset = response.headers.get(provider === "github" ? "x-ratelimit-reset" : "ratelimit-reset");
     if (response.status === 403 && rateRemaining === "0") {
-      return providerError("PROVIDER_RATE_LIMITED", reset ? `Public ${provider} API rate limit exceeded. Try again after reset ${reset}.` : `Public ${provider} API rate limit exceeded. Try again later.`, response.status);
+      const rateLimitMetadata = parseRateLimitReset(reset);
+      return providerError("PROVIDER_RATE_LIMITED", formatRateLimitMessage(provider, rateLimitMetadata), response.status, rateLimitMetadata);
     }
 
     return providerError(
@@ -111,7 +166,14 @@ export function mapProviderResponseError(provider: RepositoryProvider, response:
   }
 
   if (response.status === 429) {
-    return providerError("PROVIDER_RATE_LIMITED", `Public ${provider} API rate limit exceeded. Try again later.`, response.status);
+    const retryAfter = response.headers.get("retry-after");
+    const retryAfterSeconds = retryAfter ? Number.parseInt(retryAfter, 10) : undefined;
+    return providerError(
+      "PROVIDER_RATE_LIMITED",
+      `Public ${provider} API rate limit exceeded. Try again later.`,
+      response.status,
+      Number.isFinite(retryAfterSeconds) && retryAfterSeconds !== undefined ? { retryAfterSeconds } : {},
+    );
   }
 
   return providerError("PROVIDER_UNAVAILABLE", `Public ${provider} API request failed.`, response.status);
@@ -160,10 +222,6 @@ function notAvailableChangeRisk(provider: RepositoryProvider): ChangeRiskEvidenc
   };
 }
 
-function makeReleaseId(reference: RepositoryReference, type: string, label: string | number): string {
-  return `${reference.provider}:${encodeURIComponent(reference.fullPath)}:${type}:${encodeURIComponent(String(label))}`;
-}
-
 function releaseNameFromTag(tag: string): string {
   return tag.replace(/^refs\/tags\//, "");
 }
@@ -176,7 +234,7 @@ async function jsonOrNull(response: Response): Promise<unknown> {
   }
 }
 
-async function fetchJson(fetcher: FetchLike, url: string, init: RequestInit, provider: RepositoryProvider, evidenceEndpoint = false): Promise<{ ok: true; data: unknown } | { ok: false; error: PublicRepositoryError }> {
+async function fetchJson(fetcher: FetchLike, url: string, init: RequestInit, provider: RepositoryProvider, evidenceEndpoint = false): Promise<FetchJsonResult> {
   let response: Response;
 
   try {
@@ -190,6 +248,45 @@ async function fetchJson(fetcher: FetchLike, url: string, init: RequestInit, pro
   }
 
   return { ok: true, data: await jsonOrNull(response) };
+}
+
+function getGithubCache(fetcher: FetchLike): Map<string, CachedFetchJsonResult> {
+  const existing = githubProviderCaches.get(fetcher);
+  if (existing) return existing;
+
+  const cache = new Map<string, CachedFetchJsonResult>();
+  githubProviderCaches.set(fetcher, cache);
+  return cache;
+}
+
+async function fetchGithubJson(fetcher: FetchLike, url: string, evidenceEndpoint = false): Promise<FetchJsonResult> {
+  const now = Date.now();
+  const cache = getGithubCache(fetcher);
+  const key = githubCacheKey(url);
+  const cached = cache.get(key);
+
+  if (cached && cached.expiresAt > now) {
+    return cached.promise;
+  }
+
+  const promise = fetchJson(fetcher, url, githubRequestInit(), "github", evidenceEndpoint);
+  cache.set(key, { expiresAt: now + GITHUB_PROVIDER_CACHE_TTL_MS, promise });
+
+  try {
+    return await promise;
+  } catch (error) {
+    cache.delete(key);
+    throw error;
+  }
+}
+
+export function resetGitHubProviderCacheForTests(fetcher?: FetchLike): void {
+  if (fetcher) {
+    githubProviderCaches.delete(fetcher);
+    return;
+  }
+
+  githubProviderCaches.delete(fetch);
 }
 
 function parseIsoDate(value: unknown): string {
@@ -348,9 +445,12 @@ export class GitHubPublicRepositoryAdapter {
   }
 
   async getSnapshot(reference: RepositoryReference): Promise<{ ok: true; snapshot: PublicRepositorySnapshot } | { ok: false; error: PublicRepositoryError }> {
-    const repoResult = await fetchJson(this.fetcher, `https://api.github.com/repos/${reference.fullPath}`, { headers: githubHeaders, next: { revalidate: 45 } }, this.provider);
+    const repoResult = await fetchGithubJson(this.fetcher, `https://api.github.com/repos/${reference.fullPath}`);
     if (!repoResult.ok) return repoResult;
     if (!isRecord(repoResult.data)) return { ok: false, error: providerError("PROVIDER_UNAVAILABLE", "GitHub repository metadata was malformed.") };
+    if (repoResult.data.private === true) {
+      return { ok: false, error: providerError("REPOSITORY_NOT_FOUND", "Public repository was not found or is not visible anonymously.", 404) };
+    }
 
     const defaultBranch = typeof repoResult.data.default_branch === "string" ? repoResult.data.default_branch : "main";
     const repository: NormalizedRepository = {
@@ -389,7 +489,7 @@ export class GitHubPublicRepositoryAdapter {
   }
 
   private async listPullRequestCandidates(reference: RepositoryReference): Promise<{ ok: true; candidates: NormalizedCandidate[] } | { ok: false; error: PublicRepositoryError }> {
-    const pulls = await fetchJson(this.fetcher, `https://api.github.com/repos/${reference.fullPath}/pulls?state=open&per_page=20`, { headers: githubHeaders, next: { revalidate: 45 } }, this.provider, true);
+    const pulls = await fetchGithubJson(this.fetcher, `https://api.github.com/repos/${reference.fullPath}/pulls?state=open&per_page=20`, true);
     if (!pulls.ok) return pulls.error.code === "EVIDENCE_NOT_AVAILABLE" ? { ok: true, candidates: [] } : pulls;
     if (!Array.isArray(pulls.data)) return { ok: true, candidates: [] };
 
@@ -397,8 +497,8 @@ export class GitHubPublicRepositoryAdapter {
       const number = typeof pull.number === "number" ? pull.number : undefined;
       if (number === undefined) return null;
 
-      const detail = await fetchJson(this.fetcher, `https://api.github.com/repos/${reference.fullPath}/pulls/${number}`, { headers: githubHeaders, next: { revalidate: 45 } }, this.provider, true);
-      const files = await fetchJson(this.fetcher, `https://api.github.com/repos/${reference.fullPath}/pulls/${number}/files?per_page=100`, { headers: githubHeaders, next: { revalidate: 45 } }, this.provider, true);
+      const detail = await fetchGithubJson(this.fetcher, `https://api.github.com/repos/${reference.fullPath}/pulls/${number}`, true);
+      const files = await fetchGithubJson(this.fetcher, `https://api.github.com/repos/${reference.fullPath}/pulls/${number}/files?per_page=100`, true);
       const record = detail.ok && isRecord(detail.data) ? detail.data : pull;
       const fileRows = files.ok && Array.isArray(files.data) ? files.data.filter(isRecord) : [];
       const baseBranch = nestedString(record.base, "ref") ?? nestedString(pull.base, "ref");
@@ -449,7 +549,7 @@ export class GitHubPublicRepositoryAdapter {
   }
 
   private async listReleaseCandidates(reference: RepositoryReference, defaultBranch: string): Promise<{ ok: true; candidates: NormalizedCandidate[] } | { ok: false; error: PublicRepositoryError }> {
-    const releases = await fetchJson(this.fetcher, `https://api.github.com/repos/${reference.fullPath}/releases?per_page=20`, { headers: githubHeaders, next: { revalidate: 45 } }, this.provider, true);
+    const releases = await fetchGithubJson(this.fetcher, `https://api.github.com/repos/${reference.fullPath}/releases?per_page=20`, true);
     if (!releases.ok && releases.error.code !== "EVIDENCE_NOT_AVAILABLE") return releases;
 
     if (releases.ok && Array.isArray(releases.data) && releases.data.length > 0) {
@@ -483,7 +583,7 @@ export class GitHubPublicRepositoryAdapter {
       };
     }
 
-    const tags = await fetchJson(this.fetcher, `https://api.github.com/repos/${reference.fullPath}/tags?per_page=20`, { headers: githubHeaders, next: { revalidate: 45 } }, this.provider, true);
+    const tags = await fetchGithubJson(this.fetcher, `https://api.github.com/repos/${reference.fullPath}/tags?per_page=20`, true);
     if (!tags.ok) return tags.error.code === "EVIDENCE_NOT_AVAILABLE" ? { ok: true, candidates: [] } : tags;
 
     return {
@@ -517,7 +617,7 @@ export class GitHubPublicRepositoryAdapter {
   private async getCi(reference: RepositoryReference, commitSha: string): Promise<CiEvidence> {
     if (commitSha === "unknown") return notAvailableCi(this.provider);
 
-    const runs = await fetchJson(this.fetcher, `https://api.github.com/repos/${reference.fullPath}/actions/runs?head_sha=${encodeURIComponent(commitSha)}&per_page=20`, { headers: githubHeaders, next: { revalidate: 45 } }, this.provider, true);
+    const runs = await fetchGithubJson(this.fetcher, `https://api.github.com/repos/${reference.fullPath}/actions/runs?head_sha=${encodeURIComponent(commitSha)}&per_page=20`, true);
     if (!runs.ok || !isRecord(runs.data) || !Array.isArray(runs.data.workflow_runs)) return notAvailableCi(this.provider);
 
     return ciFromRows(this.provider, reference, runs.data.workflow_runs.filter(isRecord), "GitHub Actions workflow runs", "workflow", "html_url");
@@ -526,7 +626,7 @@ export class GitHubPublicRepositoryAdapter {
   private async getChangeRisk(reference: RepositoryReference, current: string, previous?: string): Promise<ChangeRiskEvidence> {
     if (!previous || current === "unknown" || previous === "unknown") return notAvailableChangeRisk(this.provider);
 
-    const compare = await fetchJson(this.fetcher, `https://api.github.com/repos/${reference.fullPath}/compare/${encodeURIComponent(previous)}...${encodeURIComponent(current)}`, { headers: githubHeaders, next: { revalidate: 45 } }, this.provider, true);
+    const compare = await fetchGithubJson(this.fetcher, `https://api.github.com/repos/${reference.fullPath}/compare/${encodeURIComponent(previous)}...${encodeURIComponent(current)}`, true);
     if (!compare.ok || !isRecord(compare.data)) return notAvailableChangeRisk(this.provider);
 
     return {
@@ -551,7 +651,7 @@ export class GitHubPublicRepositoryAdapter {
     const changeRisk = candidate.changeStats ? normalizeCandidateChangeRisk(this.provider, candidate) : await this.getChangeRisk(reference, candidate.commitSha, previous?.commitSha);
 
     return {
-      id: makeReleaseId(reference, candidate.type === "PULL_REQUEST" ? "pr" : candidate.type === "TAG" ? "tag" : "release", candidate.number ?? candidate.label),
+      id: createCanonicalReleaseId(reference, candidate.type === "PULL_REQUEST" ? "pr" : candidate.type === "TAG" ? "tag" : "release", candidate.number ?? candidate.label),
       version: candidate.label,
       name: candidate.name,
       risk: riskFromChangeRisk(changeRisk.level),
@@ -785,7 +885,7 @@ export class GitLabPublicRepositoryAdapter {
     const changeRisk = candidate.changeStats ? normalizeCandidateChangeRisk(this.provider, candidate) : await this.getChangeRisk(reference, candidate.commitSha, previous?.commitSha);
 
     return {
-      id: makeReleaseId(reference, candidate.type === "MERGE_REQUEST" ? "mr" : candidate.type === "TAG" ? "tag" : "release", candidate.number ?? candidate.label),
+      id: createCanonicalReleaseId(reference, candidate.type === "MERGE_REQUEST" ? "mr" : candidate.type === "TAG" ? "tag" : "release", candidate.number ?? candidate.label),
       version: candidate.label,
       name: candidate.name,
       risk: riskFromChangeRisk(changeRisk.level),

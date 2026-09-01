@@ -4,7 +4,10 @@ import { DEFAULT_PUBLIC_REPOSITORY_URL, parsePublicRepositoryUrl } from "@/lib/r
 export const dynamic = "force-dynamic";
 export const revalidate = 45;
 
-function errorResponse(error: { code: string; message: string; status?: number }, fallbackStatus = 400): Response {
+function errorResponse(
+  error: { code: string; message: string; status?: number; retryAfterSeconds?: number; rateLimitResetAt?: string },
+  fallbackStatus = 400,
+): Response {
   const status =
     error.status ??
     (error.code === "REPOSITORY_NOT_FOUND"
@@ -19,6 +22,8 @@ function errorResponse(error: { code: string; message: string; status?: number }
     {
       code: error.code,
       message: error.message,
+      ...(typeof error.retryAfterSeconds === "number" ? { retryAfterSeconds: error.retryAfterSeconds } : {}),
+      ...(error.rateLimitResetAt ? { rateLimitResetAt: error.rateLimitResetAt } : {}),
     },
     { status },
   );

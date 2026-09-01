@@ -125,6 +125,8 @@ export type PublicRepositoryError = {
     | "EVIDENCE_NOT_AVAILABLE";
   message: string;
   status?: number;
+  retryAfterSeconds?: number;
+  rateLimitResetAt?: string;
 };
 
 export type ReleaseLookupResult<T> =

@@ -127,7 +127,7 @@ test("packet includes pull request candidate metadata without changing recommend
     repository: repository.reference,
     release: {
       ...release.data,
-      id: "github:example%2Fproject:pr:42",
+      id: "github:example/project:pr:42",
       version: "PR #42",
       name: "Payment refactor",
       branch: "main",
@@ -145,7 +145,7 @@ test("packet includes pull request candidate metadata without changing recommend
       },
     },
     analysis: analysis.data,
-    humanDecision: { releaseId: "github:example%2Fproject:pr:42", status: "PENDING" },
+    humanDecision: { releaseId: "github:example/project:pr:42", status: "PENDING" },
     generatedAt,
   });
   const markdown = createReleaseDecisionPacketMarkdown(packet);

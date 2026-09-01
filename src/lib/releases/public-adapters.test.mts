@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { afterEach, test } from "node:test";
 
 import { analyzeReleaseRecord } from "../decision/engine.ts";
-import { GitHubPublicRepositoryAdapter, GitLabPublicRepositoryAdapter, mapProviderResponseError } from "./public-adapters.ts";
+import { GitHubPublicRepositoryAdapter, GitLabPublicRepositoryAdapter, mapProviderResponseError, resetGitHubProviderCacheForTests } from "./public-adapters.ts";
 import { createEvidenceProvenance, safeProviderExternalUrl } from "./provenance.ts";
 import { parsePublicRepositoryUrl } from "./repository.ts";
 import type { ReleaseRecord } from "./types.ts";
@@ -24,6 +24,10 @@ function fetchMap(routes: Record<string, Response>) {
     return route.clone();
   };
 }
+
+afterEach(() => {
+  delete process.env.GITHUB_TOKEN;
+});
 
 test("GitHub adapter normalizes repository metadata, releases, CI and change data", async () => {
   const reference = ref("https://github.com/example/project");
@@ -82,7 +86,7 @@ test("GitHub adapter discovers open pull requests as primary candidates", async 
 
   assert.equal(result.ok, true);
   assert.equal(result.snapshot.releases.length, 2);
-  assert.equal(result.snapshot.releases[0].id, "github:example%2Fproject:pr:42");
+  assert.equal(result.snapshot.releases[0].id, "github:example/project:pr:42");
   assert.equal(result.snapshot.releases[0].version, "PR #42");
   assert.equal(result.snapshot.releases[0].name, "Payment refactor");
   assert.equal(result.snapshot.releases[0].branch, "main");
@@ -146,8 +150,149 @@ test("GitHub repository not found and rate limits are typed", async () => {
   assert.equal(notFound.ok, false);
   assert.equal(notFound.error.code, "REPOSITORY_NOT_FOUND");
 
-  const rateLimited = mapProviderResponseError("github", response({ message: "limit" }, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "123" }));
+  const rateLimited = mapProviderResponseError("github", response({ message: "limit" }, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1893456000" }));
   assert.equal(rateLimited.code, "PROVIDER_RATE_LIMITED");
+  assert.equal(rateLimited.rateLimitResetAt, "2030-01-01T00:00:00.000Z");
+  assert.match(rateLimited.message, /Try again after 2030-01-01T00:00:00\.000Z/);
+});
+
+test("GitHub adapter sends authenticated server header only when GITHUB_TOKEN exists", async () => {
+  const reference = ref("https://github.com/example/project");
+  const seenAuthHeaders: Array<string | undefined> = [];
+  const routes = {
+    "https://api.github.com/repos/example/project": response({ default_branch: "main" }),
+    "https://api.github.com/repos/example/project/pulls?state=open&per_page=20": response([]),
+    "https://api.github.com/repos/example/project/releases?per_page=20": response([]),
+    "https://api.github.com/repos/example/project/tags?per_page=20": response([]),
+  };
+  const fetcher = async (input: string, init?: RequestInit): Promise<Response> => {
+    seenAuthHeaders.push(new Headers(init?.headers).get("authorization") ?? undefined);
+    return fetchMap(routes)(input);
+  };
+
+  await new GitHubPublicRepositoryAdapter(fetcher).getSnapshot(reference);
+  assert.ok(seenAuthHeaders.every((header) => header === undefined));
+
+  resetGitHubProviderCacheForTests(fetcher);
+  seenAuthHeaders.length = 0;
+  process.env.GITHUB_TOKEN = "test-token-never-print";
+
+  await new GitHubPublicRepositoryAdapter(fetcher).getSnapshot(reference);
+  assert.ok(seenAuthHeaders.every((header) => header === "Bearer test-token-never-print"));
+});
+
+test("GitHub token does not expand LIVE mode to private repository evidence", async () => {
+  process.env.GITHUB_TOKEN = "test-token-never-print";
+  const reference = ref("https://github.com/example/private-project");
+  const calls: string[] = [];
+  const fetcher = async (input: string): Promise<Response> => {
+    calls.push(input);
+    return fetchMap({
+      "https://api.github.com/repos/example/private-project": response({ default_branch: "main", private: true }),
+    })(input);
+  };
+
+  const result = await new GitHubPublicRepositoryAdapter(fetcher).getSnapshot(reference);
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "REPOSITORY_NOT_FOUND");
+  assert.deepEqual(calls, ["https://api.github.com/repos/example/private-project"]);
+});
+
+test("GitHub adapter never exposes token in normalized outputs or typed errors", async () => {
+  const secret = "test-token-never-print";
+  process.env.GITHUB_TOKEN = secret;
+  const reference = ref("https://github.com/example/project");
+  const routes = {
+    "https://api.github.com/repos/example/project": response({ default_branch: "main", description: "Example" }),
+    "https://api.github.com/repos/example/project/pulls?state=open&per_page=20": response([]),
+    "https://api.github.com/repos/example/project/releases?per_page=20": response([]),
+    "https://api.github.com/repos/example/project/tags?per_page=20": response([{ name: "v1", commit: { sha: "aaaa" } }]),
+    "https://api.github.com/repos/example/project/actions/runs?head_sha=aaaa&per_page=20": response({ workflow_runs: [] }),
+  };
+  const snapshot = await new GitHubPublicRepositoryAdapter(fetchMap(routes)).getSnapshot(reference);
+  assert.equal(snapshot.ok, true);
+  assert.doesNotMatch(JSON.stringify(snapshot), new RegExp(secret));
+
+  const rateLimited = mapProviderResponseError("github", response({ message: "limit" }, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1893456000" }));
+  assert.doesNotMatch(JSON.stringify(rateLimited), new RegExp(secret));
+});
+
+test("GitHub adapter deduplicates cached identical requests including in-flight analyses", async () => {
+  const reference = ref("https://github.com/example/project");
+  const calls = new Map<string, number>();
+  const routes = {
+    "https://api.github.com/repos/example/project": response({ default_branch: "main" }),
+    "https://api.github.com/repos/example/project/pulls?state=open&per_page=20": response([]),
+    "https://api.github.com/repos/example/project/releases?per_page=20": response([]),
+    "https://api.github.com/repos/example/project/tags?per_page=20": response([{ name: "v1", commit: { sha: "aaaa" } }]),
+    "https://api.github.com/repos/example/project/actions/runs?head_sha=aaaa&per_page=20": response({ workflow_runs: [] }),
+  };
+  const fetcher = async (input: string): Promise<Response> => {
+    calls.set(input, (calls.get(input) ?? 0) + 1);
+    await Promise.resolve();
+    return fetchMap(routes)(input);
+  };
+  const adapter = new GitHubPublicRepositoryAdapter(fetcher);
+
+  const [first, second] = await Promise.all([adapter.getSnapshot(reference), adapter.getSnapshot(reference)]);
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(calls.get("https://api.github.com/repos/example/project"), 1);
+
+  await adapter.getSnapshot(reference);
+  assert.equal(calls.get("https://api.github.com/repos/example/project"), 1);
+});
+
+test("GitHub provider cache keys isolate repositories and PR candidates", async () => {
+  const one = ref("https://github.com/example/one");
+  const two = ref("https://github.com/example/two");
+  const calls: string[] = [];
+  const routes = {
+    "https://api.github.com/repos/example/one": response({ default_branch: "main" }),
+    "https://api.github.com/repos/example/one/pulls?state=open&per_page=20": response([
+      { number: 1, title: "One", base: { ref: "main" }, head: { ref: "a", sha: "aaaa" }, html_url: "https://github.com/example/one/pull/1" },
+      { number: 2, title: "Two", base: { ref: "main" }, head: { ref: "b", sha: "bbbb" }, html_url: "https://github.com/example/one/pull/2" },
+    ]),
+    "https://api.github.com/repos/example/one/pulls/1": response({ number: 1, base: { ref: "main" }, head: { sha: "aaaa" }, changed_files: 0, additions: 0, deletions: 0 }),
+    "https://api.github.com/repos/example/one/pulls/1/files?per_page=100": response([]),
+    "https://api.github.com/repos/example/one/pulls/2": response({ number: 2, base: { ref: "main" }, head: { sha: "bbbb" }, changed_files: 0, additions: 0, deletions: 0 }),
+    "https://api.github.com/repos/example/one/pulls/2/files?per_page=100": response([]),
+    "https://api.github.com/repos/example/one/actions/runs?head_sha=aaaa&per_page=20": response({ workflow_runs: [] }),
+    "https://api.github.com/repos/example/one/actions/runs?head_sha=bbbb&per_page=20": response({ workflow_runs: [] }),
+    "https://api.github.com/repos/example/two": response({ default_branch: "main" }),
+    "https://api.github.com/repos/example/two/pulls?state=open&per_page=20": response([]),
+    "https://api.github.com/repos/example/two/releases?per_page=20": response([]),
+    "https://api.github.com/repos/example/two/tags?per_page=20": response([]),
+  };
+  const fetcher = async (input: string): Promise<Response> => {
+    calls.push(input);
+    return fetchMap(routes)(input);
+  };
+  const adapter = new GitHubPublicRepositoryAdapter(fetcher);
+
+  const oneResult = await adapter.getSnapshot(one);
+  const twoResult = await adapter.getSnapshot(two);
+  assert.equal(oneResult.ok, true);
+  assert.equal(twoResult.ok, true);
+  assert.ok(calls.includes("https://api.github.com/repos/example/one"));
+  assert.ok(calls.includes("https://api.github.com/repos/example/two"));
+  assert.ok(calls.includes("https://api.github.com/repos/example/one/pulls/1"));
+  assert.ok(calls.includes("https://api.github.com/repos/example/one/pulls/2"));
+});
+
+test("GitHub rate limit remains typed without uncontrolled retries", async () => {
+  const reference = ref("https://github.com/example/limited");
+  let callCount = 0;
+  const fetcher = async (): Promise<Response> => {
+    callCount += 1;
+    return response({ message: "limit" }, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1893456000" });
+  };
+
+  const result = await new GitHubPublicRepositoryAdapter(fetcher).getSnapshot(reference);
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "PROVIDER_RATE_LIMITED");
+  assert.equal(result.error.rateLimitResetAt, "2030-01-01T00:00:00.000Z");
+  assert.equal(callCount, 1);
 });
 
 test("GitLab adapter discovers open merge requests as primary candidates", async () => {
@@ -175,7 +320,7 @@ test("GitLab adapter discovers open merge requests as primary candidates", async
   assert.equal(result.ok, true);
   assert.equal(result.snapshot.repository.namespace, "example/subgroup");
   assert.equal(result.snapshot.releases.length, 2);
-  assert.equal(result.snapshot.releases[0].id, "gitlab:example%2Fsubgroup%2Fproject:mr:17");
+  assert.equal(result.snapshot.releases[0].id, "gitlab:example/subgroup/project:mr:17");
   assert.equal(result.snapshot.releases[0].version, "MR !17");
   assert.equal(result.snapshot.releases[0].candidate?.candidateType, "MERGE_REQUEST");
   assert.equal(result.snapshot.releases[0].candidate?.candidateNumber, 17);
@@ -297,9 +442,9 @@ test("provider-normalized equivalent evidence produces equivalent domain behavio
     },
   };
 
-  const github = analyzeReleaseRecord({ ...base, id: "github:example%2Fproject:pr:1", name: "GitHub", candidate: { candidateType: "PULL_REQUEST", candidateNumber: 1, title: "Clean", baseBranch: "main", headBranch: "feature", headSha: "aaaa", state: "OPEN" } }).data;
-  const gitlab = analyzeReleaseRecord({ ...base, id: "gitlab:example%2Fproject:mr:1", name: "GitLab", candidate: { candidateType: "MERGE_REQUEST", candidateNumber: 1, title: "Clean", baseBranch: "main", headBranch: "feature", headSha: "aaaa", state: "OPEN" } }).data;
-  const release = analyzeReleaseRecord({ ...base, id: "github:example%2Fproject:release:v1", name: "Release", candidate: { candidateType: "RELEASE", title: "Clean", baseBranch: "main", headSha: "aaaa", state: "RELEASED" } }).data;
+  const github = analyzeReleaseRecord({ ...base, id: "github:example/project:pr:1", name: "GitHub", candidate: { candidateType: "PULL_REQUEST", candidateNumber: 1, title: "Clean", baseBranch: "main", headBranch: "feature", headSha: "aaaa", state: "OPEN" } }).data;
+  const gitlab = analyzeReleaseRecord({ ...base, id: "gitlab:example/project:mr:1", name: "GitLab", candidate: { candidateType: "MERGE_REQUEST", candidateNumber: 1, title: "Clean", baseBranch: "main", headBranch: "feature", headSha: "aaaa", state: "OPEN" } }).data;
+  const release = analyzeReleaseRecord({ ...base, id: "github:example/project:release:v1", name: "Release", candidate: { candidateType: "RELEASE", title: "Clean", baseBranch: "main", headSha: "aaaa", state: "RELEASED" } }).data;
 
   assert.equal(github.decision, gitlab.decision);
   assert.equal(github.decision, release.decision);

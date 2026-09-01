@@ -27,6 +27,7 @@ import { getActiveReleaseMode, setActiveReleaseMode, subscribeToReleaseModeChang
 import { resetDemoState } from "@/lib/decisions/demo-state";
 import { getActiveRepositoryReference, parsePublicRepositoryUrl, setActiveRepositoryReference, subscribeToRepositoryChanges, type RepositoryReference } from "@/lib/releases/repository";
 import type { PublicRepositorySnapshot } from "@/lib/releases/public-adapters";
+import { releaseDetailHref } from "@/lib/releases/release-id";
 import { getReleaseProvider, type ReleaseProviderError, type ReleaseWithDecision } from "@/lib/releases/providers";
 import { webMcpToolCatalog } from "@/lib/webmcp/register-tools";
 
@@ -331,7 +332,7 @@ export default function Home() {
                                 </p>
                                 <Link
                                   className="mt-1 inline-flex max-w-full truncate font-semibold text-white underline-offset-4 hover:text-cyan-100 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
-                                  href={`/releases/${release.id}`}
+                                  href={releaseDetailHref(release.id)}
                                 >
                                   {state.mode === "LIVE" ? candidateLabel(release) : release.version}
                                 </Link>
@@ -339,7 +340,7 @@ export default function Home() {
                               </div>
                               <Link
                                 className="inline-flex rounded-full border border-cyan-300/30 px-3 py-1.5 text-sm font-semibold text-cyan-100 transition hover:border-cyan-200 hover:bg-cyan-300/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
-                                href={`/releases/${release.id}`}
+                                href={releaseDetailHref(release.id)}
                               >
                                 View
                               </Link>
@@ -390,7 +391,7 @@ export default function Home() {
                               <div className="min-w-0">
                                 <Link
                                   className="inline-block max-w-full truncate font-semibold text-white underline-offset-4 hover:text-cyan-100 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
-                                  href={`/releases/${release.id}`}
+                                  href={releaseDetailHref(release.id)}
                                 >
                                   {state.mode === "LIVE" ? candidateLabel(release) : release.version}
                                 </Link>
@@ -414,7 +415,7 @@ export default function Home() {
                               <div>
                                 <Link
                                   className="inline-flex rounded-full border border-cyan-300/30 px-3 py-1.5 text-sm font-semibold text-cyan-100 transition hover:border-cyan-200 hover:bg-cyan-300/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
-                                  href={`/releases/${release.id}`}
+                                  href={releaseDetailHref(release.id)}
                                 >
                                   View
                                 </Link>
