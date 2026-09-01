@@ -135,12 +135,12 @@ function AgentPromptCard({ prompt, title }: { prompt: string; title: string }) {
   }
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-950/45 p-4">
+    <div className="rounded-2xl border border-slate-800 bg-slate-950/45 p-3.5 sm:p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-white">{title}</h3>
         <button className="rounded-full border border-cyan-300/30 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-200 hover:bg-cyan-300/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300" onClick={copyPrompt} type="button">{copied ? "Copied" : "Copy"}</button>
       </div>
-      <p className="mt-3 line-clamp-4 whitespace-pre-line text-xs leading-5 text-slate-400">{prompt}</p>
+      <p className="mt-3 line-clamp-3 whitespace-pre-line text-xs leading-5 text-slate-400">{prompt}</p>
     </div>
   );
 }
@@ -444,13 +444,20 @@ export default function Home() {
                 )}
               </Panel>
 
-              <Panel className="max-w-md overflow-hidden">
-                <SectionHeader
-                  title="Agent Interface"
-                  subtitle="The same 11 WebMCP tools operate against the currently active repository or demo mode."
-                />
+              <Panel className="overflow-hidden">
+                <div className="flex flex-col gap-3 border-b border-slate-800 px-5 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-white">Agent Interface</h2>
+                    <p className="mt-1 text-sm leading-6 text-slate-400">
+                      The same 11 WebMCP tools operate against the currently active repository or demo mode.
+                    </p>
+                  </div>
+                  <div className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-emerald-100">
+                    WebMCP Ready <span className="text-emerald-300/60">·</span> {webMcpToolCatalog.length} tools
+                  </div>
+                </div>
                 <div className="space-y-5 p-5 sm:p-6">
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid gap-3 sm:grid-cols-3">
                     <MetricCard label="Tools" value={webMcpToolCatalog.length} />
                     <MetricCard
                       label="Read"
@@ -463,38 +470,49 @@ export default function Home() {
                       value={webMcpToolCatalog.filter((tool) => !tool.annotations.readOnlyHint).length}
                     />
                   </div>
-                  <div className="space-y-4">
-                    {toolGroups.map((group) => (
-                      <div className="rounded-2xl border border-slate-800 bg-slate-950/45 p-4" key={group.heading}>
-                        <h3 className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                          {group.heading}
-                        </h3>
-                        <ul className="mt-3 space-y-2">
-                          {group.tools.map((toolName) => {
-                            const tool = webMcpToolCatalog.find((item) => item.name === toolName);
-
-                            if (!tool) return null;
-
-                            return (
-                              <li className="flex items-center justify-between gap-3" key={tool.name}>
-                                <code className="text-xs font-semibold text-cyan-100 sm:text-sm">{tool.name}</code>
-                                <Badge tone={tool.annotations.readOnlyHint ? "read" : "write"}>
-                                  {tool.annotations.readOnlyHint ? "Read" : "Write"}
-                                </Badge>
-                              </li>
-                            );
-                          })}
-                        </ul>
+                  <div className="grid gap-5 xl:grid-cols-[minmax(0,3fr)_minmax(320px,2fr)]">
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                      <div className="flex flex-wrap items-end justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">WebMCP Tool Catalog</p>
+                          <p className="mt-2 text-sm text-slate-300">Capability surface exposed to compatible agents.</p>
+                        </div>
+                        <Badge tone="neutral">11 / 9 / 2</Badge>
                       </div>
-                    ))}
-                  </div>
-                  <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Try with your agent</p>
-                    <p className="mt-2 text-sm text-slate-300">Agents investigate. Humans decide.</p>
-                    <div className="mt-4 grid gap-3">
-                      {agentPlaybookPrompts.map((item) => (
-                        <AgentPromptCard key={item.title} prompt={item.prompt} title={item.title} />
-                      ))}
+                      <div className="mt-4 grid gap-3 md:grid-cols-2">
+                        {toolGroups.map((group) => (
+                          <div className="rounded-2xl border border-slate-800 bg-slate-950/45 p-4" key={group.heading}>
+                            <h3 className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                              {group.heading}
+                            </h3>
+                            <ul className="mt-3 space-y-2">
+                              {group.tools.map((toolName) => {
+                                const tool = webMcpToolCatalog.find((item) => item.name === toolName);
+
+                                if (!tool) return null;
+
+                                return (
+                                  <li className="flex items-center justify-between gap-3" key={tool.name}>
+                                    <code className="text-xs font-semibold text-cyan-100 sm:text-sm">{tool.name}</code>
+                                    <Badge tone={tool.annotations.readOnlyHint ? "read" : "write"}>
+                                      {tool.annotations.readOnlyHint ? "Read" : "Write"}
+                                    </Badge>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Try with your agent</p>
+                      <p className="mt-2 text-sm text-slate-300">Agents investigate. Humans decide.</p>
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        {agentPlaybookPrompts.map((item) => (
+                          <AgentPromptCard key={item.title} prompt={item.prompt} title={item.title} />
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
