@@ -261,22 +261,22 @@ export default function Home() {
           title="Release Gate"
           subtitle="Agent-native software release decisions with human control. Engineering evidence is evaluated into a system recommendation; humans retain final release authority."
         >
-          <div className="rounded-2xl border border-slate-700 bg-slate-950/55 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+          <div className="flex min-h-32 w-full flex-col items-start justify-start rounded-2xl border border-slate-700 bg-slate-950/55 p-4 lg:w-96">
+            <p className="min-h-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
               {state.mode === "LIVE" ? "LIVE" : "DEMO"}
             </p>
-            <p className="mt-2 text-sm font-semibold text-slate-100">
+            <p className="mt-2 min-h-5 text-sm font-semibold leading-5 text-slate-100">
               {state.mode === "LIVE" && state.status !== "loading" && state.repository
                 ? `${state.repository.provider === "github" ? "GitHub" : "GitLab"} · ${state.repository.fullPath}`
                 : state.mode === "LIVE"
                   ? "Public repository"
                   : "Deterministic Safety Scenarios"}
             </p>
-            {state.status === "ready" && state.source ? (
-              <p className="mt-1 text-xs text-slate-400">
-                {state.source.workflow?.name ?? "Public provider"} · {state.source.branch}{state.source.commitSha ? ` @ ${shortSha(state.source.commitSha)}` : ""}{state.source.generatedAt ? ` · Generated ${formatDateTime(state.source.generatedAt)}` : ""}
-              </p>
-            ) : null}
+            <p className="mt-1 min-h-10 text-xs leading-5 text-slate-400">
+              {state.status === "ready" && state.source
+                ? `${state.source.workflow?.name ?? "Public provider"} · ${state.source.branch}${state.source.commitSha ? ` @ ${shortSha(state.source.commitSha)}` : ""}${state.source.generatedAt ? ` · Generated ${formatDateTime(state.source.generatedAt)}` : ""}`
+                : ""}
+            </p>
           </div>
         </Hero>
 
@@ -296,11 +296,16 @@ export default function Home() {
               Analyze repository
             </button>
           </form>
-          {state.mode === "LIVE" && (state.status === "ready" || state.status === "error") && state.repository ? (
-            <p className="mt-3 text-sm text-slate-300">
-              LIVE · {state.repository.provider === "github" ? "GitHub" : "GitLab"} · <span className="font-mono">{state.repository.fullPath}</span>
-            </p>
-          ) : null}
+          <p className="mt-3 flex min-h-5 items-center gap-2 text-sm leading-5 text-slate-300">
+            {state.mode === "LIVE" && (state.status === "ready" || state.status === "error") && state.repository ? (
+              <>
+                <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-300" aria-hidden="true" />
+                <span>
+                  <span className="sr-only">Live status active. </span>LIVE · {state.repository.provider === "github" ? "GitHub" : "GitLab"} · <span className="font-mono">{state.repository.fullPath}</span>
+                </span>
+              </>
+            ) : null}
+          </p>
           {repositoryMessage ? <p className="mt-3 text-sm text-cyan-100">{repositoryMessage}</p> : null}
           {repositoryError ? <p className="mt-3 text-sm text-rose-200">{repositoryError}</p> : null}
         </Panel>
@@ -314,7 +319,7 @@ export default function Home() {
         ) : (
           <>
             <section aria-label="Release summary" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <MetricCard label={summary.hasOpenCandidates ? "Candidates" : "Releases"} value={summary.releases} />
+              <MetricCard label="Releases" value={summary.releases} />
               <MetricCard label="GO" tone="go" value={summary.go} />
               <MetricCard label="Conditional" tone="conditional" value={summary.conditional} />
               <MetricCard label="Blocked" tone="blocked" value={summary.blocked} />
@@ -323,6 +328,7 @@ export default function Home() {
             <div className="grid items-start gap-6">
               <Panel className="overflow-hidden">
                 <SectionHeader
+                  className="min-h-34"
                   title={summary.hasOpenCandidates ? "Open candidates" : state.mode === "LIVE" ? "Live repository" : "Releases"}
                   subtitle={state.mode === "LIVE"
                     ? summary.hasOpenCandidates

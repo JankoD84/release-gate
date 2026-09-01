@@ -148,12 +148,13 @@ function ModeSwitch() {
   }
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-2">
-      <div className="flex gap-1" role="group" aria-label="Evidence mode">
+    <div className="w-full rounded-2xl border border-slate-800 bg-slate-900/70 p-2 sm:w-88">
+      <div className="grid grid-cols-2 gap-1" role="group" aria-label="Evidence mode">
         {(["LIVE", "DEMO"] as const).map((candidate) => (
           <button
             key={candidate}
-            className={`rounded-full px-3 py-1.5 text-sm font-bold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 ${
+            aria-pressed={mode === candidate}
+            className={`min-h-8 rounded-full px-3 py-1.5 text-center text-sm font-bold leading-5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 ${
               mode === candidate ? "bg-cyan-100 text-slate-950" : "text-slate-300 hover:bg-slate-800 hover:text-white"
             }`}
             onClick={() => chooseMode(candidate)}
@@ -163,7 +164,7 @@ function ModeSwitch() {
           </button>
         ))}
       </div>
-      <p className="mt-2 px-1 text-xs leading-5 text-slate-400">
+      <p className="mt-2 min-h-5 truncate px-1 text-xs leading-5 text-slate-400">
         {mode === "LIVE" ? "Live GitHub Evidence · JankoD84/release-gate" : "Deterministic Safety Scenarios"}
       </p>
     </div>
@@ -220,7 +221,7 @@ export function AppShell({
               </Link>
             </nav>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex w-full flex-wrap items-center gap-3 lg:w-auto lg:justify-end">
             <ModeSwitch />
             <WebMcpStatus status={status} toolCount={toolCount} />
             <button
@@ -246,8 +247,8 @@ export function AppShell({
 export function Hero({ eyebrow, title, subtitle, children }: { eyebrow: string; title: string; subtitle: string; children?: ReactNode }) {
   return (
     <section className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/72 p-6 shadow-2xl shadow-black/20 sm:p-8">
-      <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-200">{eyebrow}</p>
-      <div className="mt-4 grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
+      <p className="min-h-4 text-xs font-semibold uppercase tracking-[0.28em] text-cyan-200">{eyebrow}</p>
+      <div className="mt-4 grid gap-6 lg:grid-cols-[1fr_auto] lg:items-start">
         <div>
           <h1 className="max-w-4xl text-4xl font-semibold tracking-tight text-white sm:text-5xl">{title}</h1>
           <p className="mt-4 max-w-3xl text-base leading-7 text-slate-300 sm:text-lg">{subtitle}</p>
@@ -262,10 +263,10 @@ export function Panel({ children, className = "" }: { children: ReactNode; class
   return <section className={`rounded-3xl border border-slate-800 bg-slate-900/80 shadow-xl shadow-black/15 ${className}`}>{children}</section>;
 }
 
-export function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
+export function SectionHeader({ className = "", title, subtitle }: { className?: string; title: string; subtitle?: string }) {
   return (
-    <div className="border-b border-slate-800 px-5 py-4 sm:px-6">
-      <h2 className="text-lg font-semibold text-white">{title}</h2>
+    <div className={`border-b border-slate-800 px-5 py-4 sm:px-6 ${className}`}>
+      <h2 className="min-h-7 text-lg font-semibold text-white">{title}</h2>
       {subtitle ? <p className="mt-1 text-sm leading-6 text-slate-400">{subtitle}</p> : null}
     </div>
   );
@@ -273,11 +274,11 @@ export function SectionHeader({ title, subtitle }: { title: string; subtitle?: s
 
 export function MetricCard({ label, value, tone = "neutral" }: { label: string; value: ReactNode; tone?: BadgeTone }) {
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</p>
-      <div className="mt-2 flex items-center gap-2 text-2xl font-semibold text-white">
-        <span>{value}</span>
-        {tone !== "neutral" ? <span className={`h-2 w-2 rounded-full ${statusDotForTone(tone)}`} /> : null}
+    <div className="min-h-27 rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+      <p className="min-h-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <div className="mt-2 flex min-h-8 items-center gap-2 text-2xl font-semibold tabular-nums text-white">
+        <span className="min-w-4">{value}</span>
+        {tone !== "neutral" ? <span className={`h-2 w-2 shrink-0 rounded-full ${statusDotForTone(tone)}`} /> : null}
       </div>
     </div>
   );
