@@ -203,24 +203,24 @@ export default function Home() {
                   <p className="p-6 text-sm text-slate-300">Loading release evidence…</p>
                 ) : (
                   <>
-                    <div className="grid gap-3 p-4 lg:hidden">
+                    <div className="grid gap-3 p-4 xl:hidden">
                       {state.releases.map((release) => {
                         const finalDecision = finalDecisions[release.id] ?? "PENDING";
 
                         return (
-                          <article className="rounded-2xl border border-slate-800 bg-slate-950/45 p-4" key={release.id}>
+                          <article className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/45 p-4" key={release.id}>
                             <div className="flex flex-wrap items-start justify-between gap-3">
-                              <div>
+                              <div className="min-w-0">
                                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                                   Release
                                 </p>
                                 <Link
-                                  className="mt-1 inline-flex font-semibold text-white underline-offset-4 hover:text-cyan-100 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                                  className="mt-1 inline-flex max-w-full font-semibold text-white underline-offset-4 hover:text-cyan-100 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
                                   href={`/releases/${release.id}`}
                                 >
                                   {state.mode === "LIVE" ? shortSha(release.commitSha) : release.version}
                                 </Link>
-                                <p className="mt-1 text-xs leading-5 text-slate-500">{release.name}</p>
+                                <p className="mt-1 truncate text-xs leading-5 text-slate-500">{release.name}</p>
                               </div>
                               <Link
                                 className="inline-flex rounded-full border border-cyan-300/30 px-3 py-1.5 text-sm font-semibold text-cyan-100 transition hover:border-cyan-200 hover:bg-cyan-300/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
@@ -232,7 +232,7 @@ export default function Home() {
                             <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
                               <div>
                                 <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Branch</dt>
-                                <dd className="mt-1 font-mono text-xs text-slate-300">{release.branch}</dd>
+                                <dd className="mt-1 truncate font-mono text-xs text-slate-300">{release.branch}</dd>
                               </div>
                               <div>
                                 <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Risk</dt>
@@ -256,62 +256,58 @@ export default function Home() {
                       })}
                     </div>
 
-                    <div className="hidden lg:block">
-                      <table className="w-full table-auto text-left text-sm">
-                        <thead className="bg-slate-950/70 text-xs uppercase tracking-[0.12em] text-slate-500">
-                          <tr>
-                            <th className="px-3 py-3 font-semibold sm:px-4">Release</th>
-                            <th className="px-3 py-3 font-semibold sm:px-4">Branch</th>
-                            <th className="px-3 py-3 font-semibold sm:px-4">Risk</th>
-                            <th className="px-3 py-3 font-semibold sm:px-4">System Recommendation</th>
-                            <th className="px-3 py-3 font-semibold sm:px-4">Human Decision</th>
-                            <th className="px-3 py-3 font-semibold sm:px-4">Updated</th>
-                            <th className="px-3 py-3 font-semibold sm:px-4">Action</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-800">
-                          {state.releases.map((release) => {
-                            const finalDecision = finalDecisions[release.id] ?? "PENDING";
+                    <div className="hidden xl:block">
+                      <div className="grid grid-cols-[minmax(5.5rem,0.9fr)_minmax(0,0.8fr)_auto_auto_auto_minmax(5rem,0.75fr)_auto] items-center gap-x-3 bg-slate-950/70 px-4 py-3 text-left text-xs uppercase tracking-[0.12em] text-slate-500">
+                        <div className="font-semibold">Release</div>
+                        <div className="font-semibold">Branch</div>
+                        <div className="font-semibold">Risk</div>
+                        <div className="max-w-36 font-semibold leading-5">System Recommendation</div>
+                        <div className="max-w-32 font-semibold leading-5">Human Decision</div>
+                        <div className="font-semibold">Updated</div>
+                        <div className="font-semibold">Action</div>
+                      </div>
+                      <div className="divide-y divide-slate-800">
+                        {state.releases.map((release) => {
+                          const finalDecision = finalDecisions[release.id] ?? "PENDING";
 
-                            return (
-                              <tr className="transition hover:bg-slate-800/45" key={release.id}>
-                                <td className="px-3 py-4 sm:px-4">
-                                  <Link
-                                    className="font-semibold text-white underline-offset-4 hover:text-cyan-100 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
-                                    href={`/releases/${release.id}`}
-                                  >
-                                    {state.mode === "LIVE" ? shortSha(release.commitSha) : release.version}
-                                  </Link>
-                                  <div className="mt-1 text-xs text-slate-500">{release.name}</div>
-                                </td>
-                                <td className="px-3 py-4 font-mono text-xs text-slate-300 sm:px-4">{release.branch}</td>
-                                <td className="px-3 py-4 sm:px-4">
-                                  <Badge tone={riskTone(release.risk)}>{release.risk}</Badge>
-                                </td>
-                                <td className="px-3 py-4 sm:px-4">
-                                  <Badge tone={decisionTone(release.decision)}>
-                                    {formatDecisionLabel(release.decision)}
-                                  </Badge>
-                                </td>
-                                <td className="px-3 py-4 sm:px-4">
-                                  <Badge tone={decisionTone(finalDecision)}>
-                                    {formatDecisionLabel(finalDecision)}
-                                  </Badge>
-                                </td>
-                                <td className="px-3 py-4 text-slate-300 sm:px-4">{formatDate(release.updatedAt)}</td>
-                                <td className="px-3 py-4 sm:px-4">
-                                  <Link
-                                    className="inline-flex rounded-full border border-cyan-300/30 px-3 py-1.5 text-sm font-semibold text-cyan-100 transition hover:border-cyan-200 hover:bg-cyan-300/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
-                                    href={`/releases/${release.id}`}
-                                  >
-                                    View
-                                  </Link>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                          return (
+                            <div className="grid grid-cols-[minmax(5.5rem,0.9fr)_minmax(0,0.8fr)_auto_auto_auto_minmax(5rem,0.75fr)_auto] items-center gap-x-3 px-4 py-4 text-sm transition hover:bg-slate-800/45" key={release.id}>
+                              <div className="min-w-0">
+                                <Link
+                                  className="inline-block max-w-full truncate font-semibold text-white underline-offset-4 hover:text-cyan-100 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                                  href={`/releases/${release.id}`}
+                                >
+                                  {state.mode === "LIVE" ? shortSha(release.commitSha) : release.version}
+                                </Link>
+                                <div className="mt-1 truncate text-xs text-slate-500">{release.name}</div>
+                              </div>
+                              <div className="min-w-0 truncate font-mono text-xs text-slate-300">{release.branch}</div>
+                              <div>
+                                <Badge tone={riskTone(release.risk)}>{release.risk}</Badge>
+                              </div>
+                              <div>
+                                <Badge tone={decisionTone(release.decision)}>
+                                  {formatDecisionLabel(release.decision)}
+                                </Badge>
+                              </div>
+                              <div>
+                                <Badge tone={decisionTone(finalDecision)}>
+                                  {formatDecisionLabel(finalDecision)}
+                                </Badge>
+                              </div>
+                              <div className="text-slate-300">{formatDate(release.updatedAt)}</div>
+                              <div>
+                                <Link
+                                  className="inline-flex rounded-full border border-cyan-300/30 px-3 py-1.5 text-sm font-semibold text-cyan-100 transition hover:border-cyan-200 hover:bg-cyan-300/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                                  href={`/releases/${release.id}`}
+                                >
+                                  View
+                                </Link>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   </>
                 )}
