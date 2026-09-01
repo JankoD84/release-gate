@@ -162,7 +162,7 @@ test("flaky tests without blockers are CONDITIONAL_GO", () => {
   assert.ok(analysis.conditions.length > 0);
 });
 
-test("clean evidence is GO", () => {
+test("clean evidence is GO with no remediation actions", () => {
   const analysis = evaluateReleaseEvidence("unit-clean", cleanEvidence, {
     evaluatedAt,
   });
@@ -172,4 +172,83 @@ test("clean evidence is GO", () => {
   assert.deepEqual(analysis.blockingEvidence, []);
   assert.deepEqual(analysis.warnings, []);
   assert.deepEqual(analysis.conditions, []);
+  assert.deepEqual(analysis.requiredActions, []);
+});
+
+test("required actions map conditional warnings deterministically", () => {
+  const analysis = evaluateReleaseEvidence(
+    "unit-conditional-actions",
+    {
+      ...cleanEvidence,
+      ci: { ...cleanEvidence.ci, status: "NOT_AVAILABLE", totalJobs: 0, passedJobs: 0 },
+      tests: { ...cleanEvidence.tests, status: "NOT_AVAILABLE", total: 0, passed: 0, flaky: 0 },
+      security: { ...cleanEvidence.security, status: "NOT_AVAILABLE" },
+      changeRisk: { ...cleanEvidence.changeRisk, level: "HIGH", changedComponents: ["payments"] },
+    },
+    { evaluatedAt },
+  );
+
+  assert.equal(analysis.decision, "CONDITIONAL_GO");
+  assert.deepEqual(analysis.requiredActions.map((action) => action.code), [
+    "VERIFY_CI_EVIDENCE",
+    "VERIFY_TEST_EVIDENCE",
+    "REVIEW_CHANGE_SURFACE",
+    "REVIEW_CRITICAL_COMPONENT",
+    "VERIFY_SECURITY_EVIDENCE",
+  ]);
+});
+
+test("flaky tests map to INVESTIGATE_FLAKY_TESTS once", () => {
+  const analysis = evaluateReleaseEvidence(
+    "unit-flaky-actions",
+    { ...cleanEvidence, tests: { ...cleanEvidence.tests, status: "WARNING", flaky: 2 } },
+    { evaluatedAt },
+  );
+
+  assert.deepEqual(analysis.requiredActions.map((action) => action.code), ["INVESTIGATE_FLAKY_TESTS"]);
+});
+
+test("NO_GO blockers map to blocker actions with stable ordering", () => {
+  const analysis = evaluateReleaseEvidence(
+    "unit-blocker-actions",
+    {
+      ...cleanEvidence,
+      ci: { ...cleanEvidence.ci, status: "FAIL", failedJobs: 1 },
+      tests: { ...cleanEvidence.tests, status: "FAIL", failed: 1 },
+      security: { ...cleanEvidence.security, status: "FAIL", critical: 1, high: 1 },
+    },
+    { evaluatedAt },
+  );
+
+  assert.equal(analysis.decision, "NO_GO");
+  assert.deepEqual(analysis.requiredActions.map((action) => action.code), [
+    "FIX_CI",
+    "FIX_TESTS",
+    "FIX_CRITICAL_SECURITY",
+    "FIX_SECURITY",
+  ]);
+});
+
+test("duplicate blocker and warning inputs do not duplicate actions", () => {
+  const analysis = evaluateReleaseEvidence(
+    "unit-dedupe-actions",
+    {
+      ...cleanEvidence,
+      tests: { ...cleanEvidence.tests, status: "WARNING", flaky: 2 },
+      security: { ...cleanEvidence.security, status: "WARNING", medium: 2 },
+    },
+    { evaluatedAt },
+  );
+
+  assert.deepEqual(analysis.requiredActions.map((action) => action.code), [
+    "INVESTIGATE_FLAKY_TESTS",
+    "REVIEW_SECURITY_FINDINGS",
+  ]);
+});
+
+test("provider-equivalent normalized evidence produces equivalent required actions", () => {
+  const github = evaluateReleaseEvidence("github:example%2Fproject:v1", { ...cleanEvidence, tests: { ...cleanEvidence.tests, status: "NOT_AVAILABLE" } }, { evaluatedAt });
+  const gitlab = evaluateReleaseEvidence("gitlab:example%2Fproject:v1", { ...cleanEvidence, tests: { ...cleanEvidence.tests, status: "NOT_AVAILABLE" } }, { evaluatedAt });
+
+  assert.deepEqual(github.requiredActions, gitlab.requiredActions);
 });

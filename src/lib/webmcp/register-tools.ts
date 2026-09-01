@@ -1,11 +1,11 @@
 import type { DecisionAnalysis } from "../decision/types.ts";
 import type { ActivityLogResult } from "../decisions/activity-types.ts";
 import type {
-  FinalDecisionMutationResult,
   FinalDecisionState,
 } from "../decisions/final-decision-types.ts";
 import { getActiveReleaseMode } from "../mode.ts";
-import { getReleaseProvider, type ReleaseProviderError, type ReleaseWithDecision } from "../releases/providers.ts";
+import { getActiveRepositoryReference, type RepositoryReference } from "../releases/repository.ts";
+import { getReleaseProvider, type ProviderMutationResult, type ReleaseProviderError, type ReleaseWithDecision } from "../releases/providers.ts";
 import type {
   ChangeRiskEvidence,
   CiEvidence,
@@ -25,6 +25,7 @@ type ListReleasesResult =
       commitSha?: string;
       generatedAt?: string;
       workflowRunUrl?: string;
+      repositoryContext?: Pick<RepositoryReference, "provider" | "host" | "namespace" | "repository" | "fullPath" | "url">;
     }
   | { error: ReleaseProviderError };
 
@@ -44,8 +45,16 @@ type ActivityLogInput = {
   releaseId?: string;
 };
 
+type RepositoryOutput = {
+  source: "LIVE" | "DEMO";
+  provider: RepositoryReference["provider"] | "synthetic";
+  fullPath: string;
+  publicUrl?: string;
+};
+
 type AnalysisToolResult =
   | {
+      repository: RepositoryOutput;
       analysis: DecisionAnalysis;
     }
   | {
@@ -54,6 +63,7 @@ type AnalysisToolResult =
 
 type ToolLookupResult<T> =
   | {
+      repository: RepositoryOutput;
       releaseId: string;
       evidence: T;
     }
@@ -63,6 +73,7 @@ type ToolLookupResult<T> =
 
 type GetReleaseToolResult =
   | {
+      repository: RepositoryOutput;
       release: ReleaseWithDecision;
     }
   | {
@@ -313,8 +324,27 @@ function getActiveProvider() {
   return getReleaseProvider(getActiveReleaseMode());
 }
 
+function getRepositoryOutput(): RepositoryOutput {
+  if (getActiveReleaseMode() === "DEMO") {
+    return {
+      source: "DEMO",
+      provider: "synthetic",
+      fullPath: "Deterministic scenarios",
+    };
+  }
+
+  const repository = getActiveRepositoryReference();
+
+  return {
+    source: "LIVE",
+    provider: repository.provider,
+    fullPath: repository.fullPath,
+    publicUrl: repository.url,
+  };
+}
+
 function mapProviderLookup<T>(releaseId: string, result: { ok: true; data: T } | { ok: false; error: ReleaseProviderError }): ToolLookupResult<T> {
-  return result.ok ? { releaseId, evidence: result.data } : { error: result.error };
+  return result.ok ? { repository: getRepositoryOutput(), releaseId, evidence: result.data } : { error: result.error };
 }
 
 export function createWebMcpTools(): WebMCP.ModelContextTool[] {
@@ -345,13 +375,14 @@ export function createWebMcpTools(): WebMCP.ModelContextTool[] {
         return {
           mode: result.mode,
           releases: result.releases,
+          repositoryContext: result.repository ?? getActiveRepositoryReference(),
           ...(result.source
             ? {
                 repository: result.source.repository,
                 branch: result.source.branch,
                 commitSha: result.source.commitSha,
                 generatedAt: result.source.generatedAt,
-                workflowRunUrl: result.source.workflow.runUrl,
+                workflowRunUrl: result.source.workflow?.runUrl,
               }
             : {}),
         };
@@ -363,7 +394,7 @@ export function createWebMcpTools(): WebMCP.ModelContextTool[] {
         const { releaseId } = normalizeReleaseIdInput(input);
         const result = await getActiveProvider().getRelease(releaseId);
 
-        return result.ok ? { release: result.data } : { error: result.error };
+        return result.ok ? { repository: getRepositoryOutput(), release: result.data } : { error: result.error };
       },
     },
     {
@@ -404,12 +435,12 @@ export function createWebMcpTools(): WebMCP.ModelContextTool[] {
         const { releaseId } = normalizeReleaseIdInput(input);
         const result = await getActiveProvider().analyzeRelease(releaseId);
 
-        return result.ok ? { analysis: result.data } : { error: result.error };
+        return result.ok ? { repository: getRepositoryOutput(), analysis: result.data } : { error: result.error };
       },
     },
     {
       ...approveReleaseTool,
-      execute: async (input: unknown): Promise<FinalDecisionMutationResult> => {
+      execute: async (input: unknown): Promise<ProviderMutationResult> => {
         const { acknowledgement, releaseId } = normalizeApproveReleaseInput(input);
 
         return getActiveProvider().approveRelease(releaseId, acknowledgement);
@@ -417,7 +448,7 @@ export function createWebMcpTools(): WebMCP.ModelContextTool[] {
     },
     {
       ...rejectReleaseTool,
-      execute: async (input: unknown): Promise<FinalDecisionMutationResult> => {
+      execute: async (input: unknown): Promise<ProviderMutationResult> => {
         const { reason, releaseId } = normalizeRejectReleaseInput(input);
 
         return getActiveProvider().rejectRelease(releaseId, reason);

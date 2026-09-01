@@ -26,12 +26,8 @@ import {
   getTestEvidenceByReleaseId,
   RELEASES,
 } from "./fixtures.ts";
-import {
-  createLiveReleaseNotCurrentError,
-  type LiveEvidenceDocument,
-  type LiveEvidenceError,
-  validateLiveEvidenceDocument,
-} from "./live-evidence.ts";
+import { type PublicRepositorySnapshot } from "./public-adapters.ts";
+import { getActiveRepositoryReference, type RepositoryReference } from "./repository.ts";
 import type {
   ChangeRiskEvidence,
   CiEvidence,
@@ -39,6 +35,7 @@ import type {
   ReleaseLookupResult,
   ReleaseNotFoundError,
   ReleaseRecord,
+  PublicRepositoryError,
   SecurityEvidence,
   TestEvidence,
 } from "./types.ts";
@@ -47,7 +44,7 @@ export type ReleaseWithDecision = Release & {
   decision: ReleaseDecision;
 };
 
-export type ReleaseProviderError = ReleaseNotFoundError | LiveEvidenceError;
+export type ReleaseProviderError = ReleaseNotFoundError | PublicRepositoryError;
 
 export type ProviderLookupResult<T> =
   | { ok: true; data: T }
@@ -58,9 +55,12 @@ export type ListReleasesProviderResult =
       ok: true;
       mode: ReleaseMode;
       releases: readonly ReleaseWithDecision[];
-      source?: LiveEvidenceDocument;
+      repository?: RepositoryReference;
+      source?: PublicRepositorySnapshot["source"];
     }
   | { ok: false; mode: ReleaseMode; error: ReleaseProviderError };
+
+export type ProviderMutationResult = FinalDecisionMutationResult | { ok: false; error: ReleaseProviderError };
 
 export type ReleaseProvider = {
   listReleases(): Promise<ListReleasesProviderResult>;
@@ -71,8 +71,8 @@ export type ReleaseProvider = {
   getSecurityEvidence(releaseId: string): Promise<ProviderLookupResult<SecurityEvidence>>;
   getChangeRiskEvidence(releaseId: string): Promise<ProviderLookupResult<ChangeRiskEvidence>>;
   analyzeRelease(releaseId: string): Promise<ProviderLookupResult<DecisionAnalysis>>;
-  approveRelease(releaseId: string, acknowledgement: boolean): Promise<FinalDecisionMutationResult>;
-  rejectRelease(releaseId: string, reason?: string): Promise<FinalDecisionMutationResult>;
+  approveRelease(releaseId: string, acknowledgement: boolean): Promise<ProviderMutationResult>;
+  rejectRelease(releaseId: string, reason?: string): Promise<ProviderMutationResult>;
   getFinalDecision(releaseId: string): Promise<FinalDecisionState | { error: ReleaseProviderError }>;
   getActivityLog(releaseId?: string): Promise<ActivityLogResult>;
 };
@@ -142,67 +142,84 @@ export const DemoReleaseProvider: ReleaseProvider = {
   },
 };
 
-async function fetchLiveEvidence(init?: RequestInit): Promise<ProviderLookupResult<LiveEvidenceDocument>> {
+async function fetchLiveEvidence(init?: RequestInit): Promise<ProviderLookupResult<PublicRepositorySnapshot>> {
   const fetcher = liveFetchOverride ?? fetch;
+  const reference = getActiveRepositoryReference();
 
   try {
-    const response = await fetcher("/api/live-evidence", init);
+    const response = await fetcher(`/api/live-evidence?repositoryUrl=${encodeURIComponent(reference.url)}`, init);
     const payload: unknown = await response.json();
 
     if (!response.ok) {
       const error = isProviderError(payload)
         ? payload
-        : { code: "LIVE_EVIDENCE_UNAVAILABLE" as const, message: "Live evidence is currently unavailable." };
+        : { code: "PROVIDER_UNAVAILABLE" as const, message: "Public repository evidence is currently unavailable." };
       return { ok: false, error };
     }
 
-    const validated = validateLiveEvidenceDocument(payload);
-
-    return validated.ok
-      ? { ok: true, data: validated.document }
-      : { ok: false, error: validated.error };
+    return isSnapshot(payload)
+      ? { ok: true, data: payload }
+      : { ok: false, error: { code: "PROVIDER_UNAVAILABLE", message: "Public repository evidence payload was malformed." } };
   } catch {
     return {
       ok: false,
       error: {
-        code: "LIVE_EVIDENCE_UNAVAILABLE",
-        message: "Live evidence is currently unavailable.",
+        code: "PROVIDER_UNAVAILABLE",
+        message: "Public repository evidence is currently unavailable.",
       },
     };
   }
 }
 
-function isProviderError(value: unknown): value is LiveEvidenceError {
+function isProviderError(value: unknown): value is PublicRepositoryError {
   return (
     typeof value === "object" &&
     value !== null &&
     "code" in value &&
-    (value.code === "LIVE_EVIDENCE_UNAVAILABLE" ||
-      value.code === "LIVE_EVIDENCE_INVALID" ||
-      value.code === "LIVE_RELEASE_NOT_CURRENT") &&
+    (value.code === "INVALID_REPOSITORY_URL" ||
+      value.code === "UNSUPPORTED_REPOSITORY_PROVIDER" ||
+      value.code === "REPOSITORY_NOT_FOUND" ||
+      value.code === "PROVIDER_RATE_LIMITED" ||
+      value.code === "PROVIDER_UNAVAILABLE" ||
+      value.code === "EVIDENCE_NOT_AVAILABLE") &&
     "message" in value &&
     typeof value.message === "string"
   );
 }
 
-function currentReleaseOrError(
-  document: LiveEvidenceDocument,
-  releaseId: string,
-): ProviderLookupResult<ReleaseRecord> {
-  if (document.release.id !== releaseId) {
-    return {
-      ok: false,
-      error: createLiveReleaseNotCurrentError(releaseId),
-    };
-  }
-
-  return { ok: true, data: document.release };
+function isSnapshot(value: unknown): value is PublicRepositorySnapshot {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "repository" in value &&
+    typeof value.repository === "object" &&
+    value.repository !== null &&
+    "releases" in value &&
+    Array.isArray(value.releases)
+  );
 }
 
-function createLiveReleaseWithDecision(document: LiveEvidenceDocument): ReleaseWithDecision {
+function createReleaseNotFoundError(releaseId: string): ReleaseNotFoundError {
   return {
-    ...document.release,
-    decision: analyzeReleaseRecord(document.release).data.decision,
+    code: "RELEASE_NOT_FOUND",
+    releaseId,
+    message: `Release '${releaseId}' was not found.`,
+  };
+}
+
+function currentReleaseOrError(
+  snapshot: PublicRepositorySnapshot,
+  releaseId: string,
+): ProviderLookupResult<ReleaseRecord> {
+  const release = snapshot.releases.find((candidate) => candidate.id === releaseId);
+
+  return release ? { ok: true, data: release } : { ok: false, error: createReleaseNotFoundError(releaseId) };
+}
+
+function createLiveReleaseWithDecision(record: ReleaseRecord): ReleaseWithDecision {
+  return {
+    ...record,
+    decision: analyzeReleaseRecord(record).data.decision,
   };
 }
 
@@ -217,15 +234,16 @@ export const LiveReleaseProvider: ReleaseProvider = {
     return {
       ok: true,
       mode: "LIVE",
-      releases: [createLiveReleaseWithDecision(evidence.data)],
-      source: evidence.data,
+      releases: evidence.data.releases.map(createLiveReleaseWithDecision),
+      repository: getActiveRepositoryReference(),
+      source: evidence.data.source,
     };
   },
   async getRelease(releaseId) {
     const record = await this.getReleaseRecord(releaseId);
 
     return record.ok
-      ? { ok: true, data: { ...record.data, decision: analyzeReleaseRecord(record.data).data.decision } }
+      ? { ok: true, data: createLiveReleaseWithDecision(record.data) }
       : record;
   },
   async getReleaseRecord(releaseId) {

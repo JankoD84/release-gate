@@ -6,6 +6,7 @@ import { getFinalDecision, resetFinalDecisionStoreForTests, setFinalDecisionStor
 import { setReleaseModeForTests } from "../mode.ts";
 import { createWebMcpTools, webMcpToolCatalog } from "../webmcp/register-tools.ts";
 import { getReleaseProvider, setLiveEvidenceFetchForTests } from "./providers.ts";
+import { getDefaultRepositoryReference, setRepositoryReferenceForTests } from "./repository.ts";
 import type { LiveEvidenceDocument } from "./live-evidence.ts";
 
 class MemoryStorage implements Pick<Storage, "getItem" | "removeItem" | "setItem"> {
@@ -49,7 +50,26 @@ function createLiveDocument(overrides: Partial<LiveEvidenceDocument["release"]["
 }
 
 function mockLiveFetch(document: LiveEvidenceDocument) {
-  setLiveEvidenceFetchForTests(async () => Response.json(document));
+  setLiveEvidenceFetchForTests(async () => Response.json({
+    repository: {
+      provider: "github",
+      host: "github.com",
+      namespace: "JankoD84",
+      repository: "release-gate",
+      fullPath: "JankoD84/release-gate",
+      url: "https://github.com/JankoD84/release-gate",
+      defaultBranch: "main",
+      description: "Release Gate",
+    },
+    releases: [document.release],
+    source: {
+      repository: document.repository,
+      branch: document.branch,
+      commitSha: document.commitSha,
+      generatedAt: document.generatedAt,
+      workflow: { name: document.workflow.name, runUrl: document.workflow.runUrl },
+    },
+  }));
 }
 
 function getTool(name: string): WebMCP.ModelContextTool {
@@ -72,6 +92,7 @@ beforeEach(() => {
   resetFinalDecisionStoreForTests();
   resetActivityLogForTests();
   setReleaseModeForTests("LIVE");
+  setRepositoryReferenceForTests(getDefaultRepositoryReference());
   mockLiveFetch(createLiveDocument());
 });
 
@@ -131,12 +152,12 @@ test("stale live release IDs are rejected without fallback", async () => {
   const result = await executeTool("reject_release", { releaseId: "live-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", reason: "stale" });
 
   assert.equal(result.ok, false);
-  assert.equal((result.error as Record<string, unknown>).code, "LIVE_RELEASE_NOT_CURRENT");
+  assert.equal((result.error as Record<string, unknown>).code, "RELEASE_NOT_FOUND");
 });
 
 test("unavailable live evidence does not silently fall back to demo", async () => {
-  setLiveEvidenceFetchForTests(async () => Response.json({ code: "LIVE_EVIDENCE_UNAVAILABLE", message: "missing" }, { status: 503 }));
+  setLiveEvidenceFetchForTests(async () => Response.json({ code: "PROVIDER_UNAVAILABLE", message: "missing" }, { status: 503 }));
   const result = await executeTool("list_releases");
 
-  assert.equal((result.error as Record<string, unknown>).code, "LIVE_EVIDENCE_UNAVAILABLE");
+  assert.equal((result.error as Record<string, unknown>).code, "PROVIDER_UNAVAILABLE");
 });

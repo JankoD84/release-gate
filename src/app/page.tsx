@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { useWebMcpStatus } from "@/components/webmcp/webmcp-provider";
 import {
@@ -19,14 +19,15 @@ import {
   SectionHeader,
 } from "@/components/release-gate/ui";
 import type { ReleaseDecision } from "@/lib/decision/types";
-import { resetDemoState } from "@/lib/decisions/demo-state";
 import {
   getFinalDecision,
   subscribeToFinalDecisionChanges,
 } from "@/lib/decisions/final-decision-store";
-import { getActiveReleaseMode, subscribeToReleaseModeChanges, type ReleaseMode } from "@/lib/mode";
-import type { LiveEvidenceDocument, LiveEvidenceError } from "@/lib/releases/live-evidence";
-import { getReleaseProvider, type ReleaseWithDecision } from "@/lib/releases/providers";
+import { getActiveReleaseMode, setActiveReleaseMode, subscribeToReleaseModeChanges, type ReleaseMode } from "@/lib/mode";
+import { resetDemoState } from "@/lib/decisions/demo-state";
+import { getActiveRepositoryReference, parsePublicRepositoryUrl, setActiveRepositoryReference, subscribeToRepositoryChanges, type RepositoryReference } from "@/lib/releases/repository";
+import type { PublicRepositorySnapshot } from "@/lib/releases/public-adapters";
+import { getReleaseProvider, type ReleaseProviderError, type ReleaseWithDecision } from "@/lib/releases/providers";
 import { webMcpToolCatalog } from "@/lib/webmcp/register-tools";
 
 type HumanDecisionLabel = ReleaseDecision | "PENDING";
@@ -35,6 +36,25 @@ type ToolGroup = {
   heading: string;
   tools: readonly string[];
 };
+
+const agentPlaybookPrompts = [
+  {
+    title: "Release review",
+    prompt: "Review the current release for production.\nInspect all available release evidence, explain the recommendation and required actions, and cite the evidence sources where available.\nDo not approve or reject anything.",
+  },
+  {
+    title: "Compare releases",
+    prompt: "Review the available releases and tell me which is safest to ship.\nCompare the evidence, risks, missing evidence and required actions.\nDo not make any human decision for me.",
+  },
+  {
+    title: "Governed approval",
+    prompt: "Review the current release first.\nExplain the evidence, risks and required actions.\nIf the release is eligible, wait for my explicit approval before recording any final decision.",
+  },
+  {
+    title: "Investigate blockers",
+    prompt: "Explain exactly why the current release is blocked.\nShow the blocking evidence, evidence sources and required actions before this release can become eligible for approval.",
+  },
+] as const;
 
 const toolGroups: readonly ToolGroup[] = [
   { heading: "Discovery", tools: ["list_releases", "get_release"] },
@@ -61,18 +81,42 @@ type DashboardState =
       status: "ready";
       mode: ReleaseMode;
       releases: readonly ReleaseWithDecision[];
-      source?: LiveEvidenceDocument;
+      repository?: RepositoryReference;
+      source?: PublicRepositorySnapshot["source"];
     }
-  | { status: "error"; mode: ReleaseMode; error: LiveEvidenceError | { code: string; message: string } };
+  | { status: "error"; mode: ReleaseMode; error: ReleaseProviderError | { code: string; message: string }; repository?: RepositoryReference };
 
 function shortSha(sha: string): string {
   return sha.slice(0, 7);
+}
+
+function AgentPromptCard({ prompt, title }: { prompt: string; title: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copyPrompt() {
+    await navigator.clipboard.writeText(prompt);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-950/45 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-white">{title}</h3>
+        <button className="rounded-full border border-cyan-300/30 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-200 hover:bg-cyan-300/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300" onClick={copyPrompt} type="button">{copied ? "Copied" : "Copy"}</button>
+      </div>
+      <p className="mt-3 line-clamp-4 whitespace-pre-line text-xs leading-5 text-slate-400">{prompt}</p>
+    </div>
+  );
 }
 
 export default function Home() {
   const webMcpStatus = useWebMcpStatus();
   const [resetMessage, setResetMessage] = useState<string | null>(null);
   const [finalDecisions, setFinalDecisions] = useState<Record<string, HumanDecisionLabel>>({});
+  const [repositoryUrl, setRepositoryUrl] = useState(() => getActiveRepositoryReference().url);
+  const [repositoryMessage, setRepositoryMessage] = useState<string | null>(null);
+  const [repositoryError, setRepositoryError] = useState<string | null>(null);
   const [state, setState] = useState<DashboardState>({ status: "loading", mode: "LIVE" });
 
   useEffect(() => {
@@ -80,24 +124,28 @@ export default function Home() {
 
     async function load() {
       const mode = getActiveReleaseMode();
+      const repository = getActiveRepositoryReference();
+      setRepositoryUrl(repository.url);
       setState({ status: "loading", mode });
       const result = await getReleaseProvider(mode).listReleases();
 
       if (cancelled) return;
 
       if (!result.ok) {
-        setState({ status: "error", mode, error: result.error });
+        setState({ status: "error", mode, error: result.error, repository });
         return;
       }
 
-      setState({ status: "ready", mode, releases: result.releases, source: result.source });
+      setState({ status: "ready", mode, releases: result.releases, repository: result.repository, source: result.source });
     }
 
     load();
     const unsubscribeMode = subscribeToReleaseModeChanges(load);
+    const unsubscribeRepository = subscribeToRepositoryChanges(load);
     return () => {
       cancelled = true;
       unsubscribeMode();
+      unsubscribeRepository();
     };
   }, []);
 
@@ -146,6 +194,23 @@ export default function Home() {
     }
   }
 
+  function handleAnalyzeRepository(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const parsed = parsePublicRepositoryUrl(repositoryUrl);
+
+    if (!parsed.ok) {
+      setRepositoryError(`${parsed.error.code}: ${parsed.error.message}`);
+      return;
+    }
+
+    setRepositoryError(null);
+    setActiveReleaseMode("LIVE");
+    setActiveRepositoryReference(parsed.reference);
+    resetDemoState();
+    setRepositoryMessage("Repository switched. Local decisions and activity were cleared to avoid mixing release evidence.");
+    window.setTimeout(() => setRepositoryMessage(null), 3600);
+  }
+
   return (
     <AppShell
       current="releases"
@@ -165,21 +230,50 @@ export default function Home() {
               {state.mode === "LIVE" ? "LIVE" : "DEMO"}
             </p>
             <p className="mt-2 text-sm font-semibold text-slate-100">
-              {state.mode === "LIVE" ? "JankoD84/release-gate · main" : "Deterministic Safety Scenarios"}
+              {state.mode === "LIVE" && state.status !== "loading" && state.repository
+                ? `${state.repository.provider === "github" ? "GitHub" : "GitLab"} · ${state.repository.fullPath}`
+                : state.mode === "LIVE"
+                  ? "Public repository"
+                  : "Deterministic Safety Scenarios"}
             </p>
             {state.status === "ready" && state.source ? (
               <p className="mt-1 text-xs text-slate-400">
-                GitHub Actions · main @ {shortSha(state.source.commitSha)} · Generated {formatDateTime(state.source.generatedAt)}
+                {state.source.workflow?.name ?? "Public provider"} · {state.source.branch}{state.source.commitSha ? ` @ ${shortSha(state.source.commitSha)}` : ""}{state.source.generatedAt ? ` · Generated ${formatDateTime(state.source.generatedAt)}` : ""}
               </p>
             ) : null}
           </div>
         </Hero>
 
+        <Panel className="p-4 sm:p-5">
+          <form className="grid gap-3 lg:grid-cols-[1fr_auto]" onSubmit={handleAnalyzeRepository}>
+            <label className="min-w-0">
+              <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Public repository</span>
+              <input
+                className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20"
+                onChange={(event) => setRepositoryUrl(event.target.value)}
+                placeholder="https://github.com/org/project"
+                type="url"
+                value={repositoryUrl}
+              />
+            </label>
+            <button className="self-end rounded-2xl border border-cyan-300/40 px-5 py-3 text-sm font-semibold text-cyan-100 transition hover:border-cyan-200 hover:bg-cyan-300/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300" type="submit">
+              Analyze repository
+            </button>
+          </form>
+          {state.mode === "LIVE" && (state.status === "ready" || state.status === "error") && state.repository ? (
+            <p className="mt-3 text-sm text-slate-300">
+              LIVE · {state.repository.provider === "github" ? "GitHub" : "GitLab"} · <span className="font-mono">{state.repository.fullPath}</span>
+            </p>
+          ) : null}
+          {repositoryMessage ? <p className="mt-3 text-sm text-cyan-100">{repositoryMessage}</p> : null}
+          {repositoryError ? <p className="mt-3 text-sm text-rose-200">{repositoryError}</p> : null}
+        </Panel>
+
         {state.status === "error" ? (
           <ErrorState
-            body={`${state.error.message} Switch to Demo to explore deterministic safety scenarios.`}
+            body={state.error.message}
             code={state.error.code}
-            title="Live evidence is currently unavailable"
+            title="Public repository evidence is currently unavailable"
           />
         ) : (
           <>
@@ -196,11 +290,11 @@ export default function Home() {
                 <SectionHeader
                   title={state.mode === "LIVE" ? "Live repository" : "Releases"}
                   subtitle={state.mode === "LIVE"
-                    ? "Real evidence from JankoD84/release-gate main, generated by GitHub Actions."
+                    ? "Real public repository evidence. Provider-specific CI, test, security, and change availability may vary."
                     : "Deterministic Safety Scenarios: controlled scenarios for demonstrating GO, CONDITIONAL GO, NO GO, and human-governance behavior."}
                 />
                 {state.status === "loading" ? (
-                  <p className="p-6 text-sm text-slate-300">Loading release evidence…</p>
+                  <p className="p-6 text-sm text-slate-300">Loading public repository…</p>
                 ) : (
                   <>
                     <div className="grid gap-3 p-4 xl:hidden">
@@ -316,7 +410,7 @@ export default function Home() {
               <Panel className="overflow-hidden">
                 <SectionHeader
                   title="Agent Interface"
-                  subtitle="The same 11 WebMCP tools operate against the currently active mode."
+                  subtitle="The same 11 WebMCP tools operate against the currently active repository or demo mode."
                 />
                 <div className="space-y-5 p-5 sm:p-6">
                   <div className="grid grid-cols-3 gap-3">
@@ -356,6 +450,15 @@ export default function Home() {
                         </ul>
                       </div>
                     ))}
+                  </div>
+                  <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Try with your agent</p>
+                    <p className="mt-2 text-sm text-slate-300">Agents investigate. Humans decide.</p>
+                    <div className="mt-4 grid gap-3">
+                      {agentPlaybookPrompts.map((item) => (
+                        <AgentPromptCard key={item.title} prompt={item.prompt} title={item.title} />
+                      ))}
+                    </div>
                   </div>
                 </div>
               </Panel>

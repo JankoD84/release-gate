@@ -123,6 +123,9 @@ test("get_release execution returns release metadata for a valid releaseId", asy
   assert.equal(release.id, "release-240");
   assert.equal(release.version, "2.4.0");
   assert.equal(release.decision, "GO");
+  assertRecord(result.repository);
+  assert.equal(result.repository.provider, "synthetic");
+  assert.equal(result.repository.source, "DEMO");
 });
 
 test("get_release execution returns RELEASE_NOT_FOUND for an invalid releaseId", async () => {
@@ -172,6 +175,8 @@ test("analyze_release execution returns CONDITIONAL_GO for release-250", async (
   assert.equal(analysis.decision, "CONDITIONAL_GO");
   assert.ok(Array.isArray(analysis.warnings));
   assert.ok(analysis.warnings.length > 0);
+  assert.ok(Array.isArray(analysis.requiredActions));
+  assert.ok(analysis.requiredActions.some((action) => action.code === "INVESTIGATE_FLAKY_TESTS"));
 });
 
 test("analyze_release execution returns NO_GO for release-260", async () => {
@@ -183,6 +188,8 @@ test("analyze_release execution returns NO_GO for release-260", async () => {
   assert.equal(analysis.decision, "NO_GO");
   assert.ok(Array.isArray(analysis.blockingEvidence));
   assert.ok(analysis.blockingEvidence.length >= 3);
+  assert.ok(Array.isArray(analysis.requiredActions));
+  assert.ok(analysis.requiredActions.some((action) => action.code === "FIX_CI"));
 });
 
 test("approve_release execution requires acknowledgement true", async () => {

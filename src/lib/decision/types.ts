@@ -15,6 +15,15 @@ export type DecisionEvidenceItem = {
   message: string;
 };
 
+export type RequiredActionPriority = "BLOCKER" | "REQUIRED" | "RECOMMENDED";
+
+export type RequiredAction = {
+  code: string;
+  priority: RequiredActionPriority;
+  category: string;
+  message: string;
+};
+
 export type DecisionAnalysis = {
   releaseId: string;
   decision: ReleaseDecision;
@@ -22,6 +31,7 @@ export type DecisionAnalysis = {
   blockingEvidence: readonly DecisionEvidenceItem[];
   warnings: readonly DecisionEvidenceItem[];
   conditions: readonly string[];
+  requiredActions: readonly RequiredAction[];
   summary: string;
   evaluatedAt: string;
 };

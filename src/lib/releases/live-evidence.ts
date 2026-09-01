@@ -74,7 +74,7 @@ function isRisk(value: unknown): value is ReleaseRisk {
 function isCiEvidence(value: unknown): value is CiEvidence {
   return (
     isRecord(value) &&
-    (value.status === "PASS" || value.status === "FAIL") &&
+    (value.status === "PASS" || value.status === "FAIL" || value.status === "NOT_AVAILABLE") &&
     typeof value.workflow === "string" &&
     isNonNegativeInteger(value.totalJobs) &&
     isNonNegativeInteger(value.passedJobs) &&
@@ -86,7 +86,7 @@ function isCiEvidence(value: unknown): value is CiEvidence {
 function isTestEvidence(value: unknown): value is TestEvidence {
   return (
     isRecord(value) &&
-    (value.status === "PASS" || value.status === "WARNING" || value.status === "FAIL") &&
+    (value.status === "PASS" || value.status === "WARNING" || value.status === "FAIL" || value.status === "NOT_AVAILABLE") &&
     isNonNegativeInteger(value.total) &&
     isNonNegativeInteger(value.passed) &&
     isNonNegativeInteger(value.failed) &&
@@ -98,7 +98,7 @@ function isTestEvidence(value: unknown): value is TestEvidence {
 function isSecurityEvidence(value: unknown): value is SecurityEvidence {
   return (
     isRecord(value) &&
-    (value.status === "PASS" || value.status === "WARNING" || value.status === "FAIL") &&
+    (value.status === "PASS" || value.status === "WARNING" || value.status === "FAIL" || value.status === "NOT_AVAILABLE") &&
     isNonNegativeInteger(value.critical) &&
     isNonNegativeInteger(value.high) &&
     isNonNegativeInteger(value.medium) &&

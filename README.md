@@ -10,26 +10,25 @@ Release Gate has exactly two explicit evidence modes:
 
 ### LIVE
 
-Real evidence from the public repository:
+Real read-only evidence from public repositories on exactly two hosts:
 
-- Repository: `JankoD84/release-gate`
-- Branch: `main`
-- Evidence source: GitHub Actions
+- `github.com`
+- `gitlab.com`
 
-LIVE mode evaluates the current `main` commit using a commit-specific release ID such as `live-6dcdc4ca80ae510f2e7f9727d814ca31b27a0180`. Human decisions are keyed to that exact SHA, so approval for one commit does not carry to another commit.
+The dashboard starts with the existing safe default public GitHub source, `https://github.com/JankoD84/release-gate`, and can switch to another public GitHub or GitLab repository by URL. No credentials are required for public repository mode, and this version does not support private repositories, OAuth, user-entered tokens, GitHub Apps, GitLab applications, webhooks, background synchronization, or deployment execution.
 
-LIVE currently measures:
+LIVE discovery uses provider adapters under a provider-neutral Release Gate surface:
 
-- `npm run test` test results parsed from the Node test runner output
-- required CI gate outcomes for tests, lint, and build
-- dependency security evidence from `npm audit --json`
-- Git change surface from the evaluated commit range
+- GitHub: public repository metadata, GitHub Releases, fallback tags, GitHub Actions workflow runs when anonymously available, and compare/change data when available.
+- GitLab: public project metadata, GitLab Releases when anonymously available, fallback repository tags, pipelines when anonymously available, and compare/change data when available.
 
-LIVE does **not** claim arbitrary repository support, GitHub App installation, GitHub OAuth, deployment execution, source-code vulnerability scanning, enterprise CI integrations, or real coverage measurement. LIVE coverage is shown as `N/A` because this project has no coverage collector.
+Provider-specific evidence availability can vary. Missing evidence is never treated as `PASS`: unavailable CI, automated test, or security evidence is represented explicitly as `NOT_AVAILABLE` and drives the existing `CONDITIONAL_GO` warning pathway. Release Gate does not infer test success from CI success and does not infer security status from repository metadata.
+
+Where provider data includes repository-facing evidence links, Release Gate attaches provider-neutral provenance metadata. Examples include GitHub Releases/tags, GitHub Actions workflow runs, GitHub compare pages, GitLab Releases/tags, GitLab pipelines, and GitLab compare pages. Provenance links are constrained to HTTPS `github.com` or `gitlab.com` URLs and unsafe or unrelated hosts are omitted.
+
+The default Release Gate repository still uses its published GitHub Actions evidence asset when available. Other public repositories use normalized public provider evidence. If LIVE evidence is unavailable or invalid, Release Gate shows a typed error and does not silently fall back to DEMO.
 
 LIVE change components are derived deterministically from paths: `src/app` and `src/components` → `web`, `src/lib/webmcp` → `agent-interface`, `src/lib/decision` and `src/lib/decisions` → `release-orchestration`, `src/lib/releases` → `release-data`, `.github` → `ci`, Markdown/documentation files → `docs`, and remaining files → `other`.
-
-If LIVE evidence is unavailable or invalid, Release Gate shows a clear error and does not silently fall back to DEMO.
 
 ### DEMO
 
@@ -50,12 +49,12 @@ Software release decisions are fragmented across CI, automated tests, security f
 Release Gate demonstrates an agent-native release decision workflow:
 
 ```text
-Evidence → System Recommendation → Human Authority → Audit
+Real Public Repository → Verifiable Evidence → WebMCP Agent Investigation → Deterministic Recommendation → Required Actions → Human Authority → Auditable Decision → Portable Decision Packet
 ```
 
 ## WebMCP
 
-Release Gate exposes one fixed browser-native WebMCP tool catalog. The same 11 tools operate against whichever mode is currently active in the application. Switching modes does not register another catalog and does not add a tool parameter.
+Release Gate exposes one fixed browser-native WebMCP tool catalog. The same 11 tools operate against whichever mode and public repository are currently active in the application. Provider details are normalized below Release Gate; agents do not need GitHub-specific or GitLab-specific tools. Switching modes or repositories does not register another catalog and does not add a tool parameter.
 
 Discovery:
 
@@ -83,7 +82,7 @@ Audit:
 
 - `get_activity_log`
 
-The catalog contains exactly 11 tools: 9 read-only tools and 2 write tools.
+The catalog contains exactly 11 tools: 9 read-only tools and 2 write tools. Relevant read outputs include additive repository/provenance metadata and `analyze_release` includes deterministic Required Actions so agents can explain both “what is the recommendation?” and “where did this evidence come from?” without new tools.
 
 ## Safety model
 
@@ -92,9 +91,27 @@ The catalog contains exactly 11 tools: 9 read-only tools and 2 write tools.
 - `approve_release` requires explicit human acknowledgement.
 - `NO_GO` cannot be overridden by approval.
 - System Recommendation remains separate from Human Final Decision.
-- LIVE stale SHA requests return `LIVE_RELEASE_NOT_CURRENT` instead of mutating state.
-- Unknown DEMO releases return `RELEASE_NOT_FOUND`.
+- Required Actions are deterministic output derived from current blockers/warnings; they do not change recommendation rules.
+- Unknown LIVE or DEMO release IDs return `RELEASE_NOT_FOUND` instead of mutating state.
+- Switching public repositories clears browser-local decisions and activity to avoid mixing evidence between repositories.
 - Write operations are reflected in the activity audit trail.
+
+## Required Actions and Decision Packet
+
+Every analysis includes deterministic Required Actions. Clean `GO` releases show `None — current evidence does not require remediation.` Blocked releases map blockers to actions such as `FIX_CI`, `FIX_TESTS`, and `FIX_SECURITY`. Conditional releases map warnings to actions such as `VERIFY_CI_EVIDENCE`, `VERIFY_TEST_EVIDENCE`, `VERIFY_SECURITY_EVIDENCE`, `INVESTIGATE_FLAKY_TESTS`, `REVIEW_CHANGE_SURFACE`, and `REVIEW_CRITICAL_COMPONENT`.
+
+The release detail page can create a browser-local Release Decision Packet in two formats:
+
+- Copy Markdown for PR/MR discussion, release notes, Slack/email, or engineering handoff.
+- Download JSON for a deterministic structured artifact.
+
+The packet includes repository identity, release identity, system recommendation, confidence, evidence summaries, provenance when available, Required Actions, Human Final Decision, and a short activity summary. It is not signed, is not uploaded, and does not call a backend.
+
+Release Gate records release-governance decisions. It does not approve or merge PRs/MRs, trigger pipelines, or deploy production.
+
+## Agent Playbook
+
+The Agent Interface includes four provider-neutral copyable prompts: Release review, Compare releases, Governed approval, and Investigate blockers. They are prompts for the user’s WebMCP-capable agent; Release Gate does not include a chatbot or LLM execution API.
 
 ## LIVE evidence distribution
 
@@ -117,7 +134,7 @@ The workflow publishes a public GitHub Release asset:
 - Release tag: `live-evidence`
 - Asset: `release-gate-evidence.json`
 
-The app fetches this public asset server-side through `GET /api/live-evidence`, validates it strictly, and returns only normalized safe evidence. No browser GitHub token is required, and no `GITHUB_TOKEN` is stored in Vercel.
+The app fetches this public asset server-side through `GET /api/live-evidence`, validates it strictly, and returns only normalized safe evidence. For other selected public repositories, the same route constructs official GitHub or GitLab API URLs from the validated repository identity. It never proxies arbitrary user-supplied URLs. No browser GitHub/GitLab token is required, and no provider token is stored in Vercel.
 
 ## Bootstrap process
 
@@ -134,8 +151,11 @@ Before that asset exists, LIVE mode shows `LIVE_EVIDENCE_UNAVAILABLE`. Switch to
 
 ```mermaid
 flowchart TD
+    Repo[Public repository URL] --> Parser[Strict parser]
+    Parser --> Adapter[GitHub or GitLab adapter]
     Mode[Active mode] --> Live[LIVE provider]
     Mode --> Demo[DEMO provider]
+    Adapter --> Live
     Live --> Record[Normalized ReleaseRecord]
     Demo --> Record
     Record --> Engine[Authoritative decision engine]
@@ -146,7 +166,7 @@ flowchart TD
     Human --> Audit[Audit trail]
 ```
 
-There is one authoritative deterministic decision engine for the built-in reference providers. GitHub Actions collects evidence only; it does not decide `GO`, `CONDITIONAL_GO`, or `NO_GO`.
+There is one authoritative deterministic decision engine for normalized evidence. Provider adapters collect and normalize evidence only; they do not decide `GO`, `CONDITIONAL_GO`, or `NO_GO`.
 
 ### Architecture guardrail
 
@@ -190,7 +210,7 @@ In a standard browser without WebMCP support, the UI can still be viewed, but br
 
 ## Project status
 
-Hackathon / reference implementation. LIVE mode intentionally supports only `JankoD84/release-gate` for this phase; arbitrary repository integrations are not part of the current product scope.
+Hackathon / reference implementation. LIVE mode intentionally supports only public repositories on `github.com` and `gitlab.com`. Private repositories and arbitrary/self-hosted repository hosts are not supported in this version.
 
 ## Additional documentation
 

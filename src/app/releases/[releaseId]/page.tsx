@@ -20,17 +20,20 @@ import {
   SectionHeader,
 } from "@/components/release-gate/ui";
 import { useWebMcpStatus } from "@/components/webmcp/webmcp-provider";
-import type { DecisionAnalysis, DecisionEvidenceItem } from "@/lib/decision/types";
+import { createReleaseDecisionPacket, createReleaseDecisionPacketMarkdown } from "@/lib/decision/packet";
+import type { DecisionAnalysis, DecisionEvidenceItem, RequiredAction } from "@/lib/decision/types";
 import { resetDemoState } from "@/lib/decisions/demo-state";
+import { getActivityLog } from "@/lib/decisions/activity-store";
 import {
   getFinalDecision,
   subscribeToFinalDecisionChanges,
 } from "@/lib/decisions/final-decision-store";
 import type { FinalDecisionState } from "@/lib/decisions/final-decision-types";
 import { getActiveReleaseMode, subscribeToReleaseModeChanges, type ReleaseMode } from "@/lib/mode";
-import type { LiveEvidenceDocument } from "@/lib/releases/live-evidence";
+import type { PublicRepositorySnapshot } from "@/lib/releases/public-adapters";
+import { getActiveRepositoryReference, subscribeToRepositoryChanges, type RepositoryReference } from "@/lib/releases/repository";
 import { getReleaseProvider, type ReleaseProviderError } from "@/lib/releases/providers";
-import type { ReleaseRecord } from "@/lib/releases/types";
+import type { EvidenceProvenance, ReleaseRecord } from "@/lib/releases/types";
 import { webMcpToolCatalog } from "@/lib/webmcp/register-tools";
 
 function EvidenceList({ items, dominant = false }: { items: readonly DecisionEvidenceItem[]; dominant?: boolean }) {
@@ -74,15 +77,54 @@ function ConditionsList({ conditions }: { conditions: readonly string[] }) {
   );
 }
 
+function RequiredActionsList({ actions, decision }: { actions: readonly RequiredAction[]; decision: DecisionAnalysis["decision"] }) {
+  if (actions.length === 0) {
+    return <p className="rounded-2xl border border-emerald-400/20 bg-emerald-950/15 p-4 text-sm leading-6 text-emerald-50">None — current evidence does not require remediation.</p>;
+  }
+
+  return (
+    <ul className="space-y-3">
+      {actions.map((action) => (
+        <li className={`rounded-2xl border p-4 ${decision === "NO_GO" && action.priority === "BLOCKER" ? "border-rose-400/30 bg-rose-950/30" : "border-amber-400/25 bg-amber-950/20"}`} key={action.code}>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={action.priority === "BLOCKER" ? "blocked" : action.priority === "REQUIRED" ? "warning" : "neutral"}>{action.priority}</Badge>
+            <span className="font-semibold text-slate-100">{action.category}</span>
+            <code className="text-xs text-slate-500">{action.code}</code>
+          </div>
+          <p className="mt-2 text-sm leading-6 text-slate-300">{action.message}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function EvidenceSource({ provenance }: { provenance?: EvidenceProvenance }) {
+  if (!provenance) {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/40 p-3 text-sm">
+      <p className="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-slate-500">Source</p>
+      <p className="mt-1 text-slate-200">{provenance.label}</p>
+      {provenance.externalUrl ? (
+        <a className="mt-1 inline-block max-w-full truncate text-cyan-100 underline-offset-4 hover:underline" href={provenance.externalUrl} rel="noreferrer" target="_blank">View source →</a>
+      ) : null}
+    </div>
+  );
+}
+
 function EvidenceCard({
   detail,
   metrics,
+  provenance,
   status,
   title,
   tone,
 }: {
   detail: string;
   metrics: readonly { label: string; value: string | number }[];
+  provenance?: EvidenceProvenance;
   status: string;
   title: string;
   tone: ReturnType<typeof evidenceTone> | ReturnType<typeof riskTone>;
@@ -106,7 +148,52 @@ function EvidenceCard({
           </div>
         ))}
       </dl>
+      <EvidenceSource provenance={provenance} />
     </article>
+  );
+}
+
+function DecisionPacketPanel({ analysis, decisionState, mode, release, repository }: { analysis: DecisionAnalysis; decisionState: FinalDecisionState; mode: ReleaseMode; release: ReleaseRecord; repository?: RepositoryReference }) {
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
+
+  function createPacket() {
+    return createReleaseDecisionPacket({
+      mode,
+      repository,
+      release,
+      analysis,
+      humanDecision: decisionState,
+      activities: getActivityLog(release.id, mode).activities,
+    });
+  }
+
+  async function copyMarkdown() {
+    const markdown = createReleaseDecisionPacketMarkdown(createPacket());
+    await navigator.clipboard.writeText(markdown);
+    setCopyMessage("Copied.");
+    window.setTimeout(() => setCopyMessage(null), 1800);
+  }
+
+  function downloadJson() {
+    const packet = createPacket();
+    const blob = new Blob([JSON.stringify(packet, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `release-gate-decision-packet-${release.version.replace(/[^a-zA-Z0-9._-]/g, "-")}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <Panel className="overflow-hidden">
+      <SectionHeader title="Decision Packet" subtitle="Portable release-governance artifact for handoff. It does not merge code or trigger deployment." />
+      <div className="flex flex-wrap items-center gap-3 p-6">
+        <button className="rounded-full border border-cyan-300/35 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:border-cyan-200 hover:bg-cyan-300/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200" onClick={copyMarkdown} type="button">Copy Markdown</button>
+        <button className="rounded-full border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-100 transition hover:border-slate-400 hover:bg-slate-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300" onClick={downloadJson} type="button">Download JSON</button>
+        {copyMessage ? <span className="text-sm text-cyan-100" role="status">{copyMessage}</span> : null}
+      </div>
+    </Panel>
   );
 }
 
@@ -132,6 +219,8 @@ function DecisionGate({ analysis, decisionState }: { analysis: DecisionAnalysis;
           {decisionState.status === "DECIDED" ? (
             <dl className="mt-5 grid gap-3 text-sm text-slate-300">
               <div><dt className="text-slate-500">Status</dt><dd className="font-semibold text-slate-100">Decision recorded</dd></div>
+              <div><dt className="text-slate-500">System Recommendation</dt><dd className="font-semibold text-slate-100">{formatDecisionLabel(analysis.decision)}</dd></div>
+              <div><dt className="text-slate-500">Human Final Decision</dt><dd className="font-semibold text-slate-100">{formatDecisionLabel(decisionState.decision.finalDecision)}</dd></div>
               <div><dt className="text-slate-500">Actor</dt><dd className="capitalize">{decisionState.decision.actor}</dd></div>
               <div><dt className="text-slate-500">Timestamp</dt><dd>{formatDateTime(decisionState.decision.decidedAt)}</dd></div>
             </dl>
@@ -172,8 +261,10 @@ function HumanDecisionPanel({
           <div className="rounded-2xl border border-emerald-400/25 bg-emerald-950/20 p-5">
             <Badge tone={decisionTone(decisionState.decision.finalDecision)}>{formatDecisionLabel(decisionState.decision.finalDecision)}</Badge>
             <h3 className="mt-4 text-lg font-semibold text-white">Decision recorded</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-300">Decision recorded and ready for downstream release automation.</p>
             <dl className="mt-4 grid gap-3 text-sm text-slate-300 sm:grid-cols-2">
-              <div><dt className="text-slate-500">Human decision</dt><dd className="font-semibold text-slate-100">{formatDecisionLabel(decisionState.decision.finalDecision)}</dd></div>
+              <div><dt className="text-slate-500">System Recommendation</dt><dd className="font-semibold text-slate-100">{formatDecisionLabel(analysis.decision)}</dd></div>
+              <div><dt className="text-slate-500">Human Final Decision</dt><dd className="font-semibold text-slate-100">{formatDecisionLabel(decisionState.decision.finalDecision)}</dd></div>
               <div><dt className="text-slate-500">Actor</dt><dd className="capitalize">{decisionState.decision.actor}</dd></div>
               <div className="sm:col-span-2"><dt className="text-slate-500">Reason</dt><dd>{decisionState.decision.reason}</dd></div>
               <div><dt className="text-slate-500">Timestamp</dt><dd>{formatDateTime(decisionState.decision.decidedAt)}</dd></div>
@@ -202,7 +293,7 @@ function HumanDecisionPanel({
 
 type DetailState =
   | { status: "loading"; mode: ReleaseMode }
-  | { status: "ready"; mode: ReleaseMode; release: ReleaseRecord; analysis: DecisionAnalysis; source?: LiveEvidenceDocument }
+  | { status: "ready"; mode: ReleaseMode; release: ReleaseRecord; analysis: DecisionAnalysis; repository?: RepositoryReference; source?: PublicRepositorySnapshot["source"] }
   | { status: "error"; mode: ReleaseMode; error: ReleaseProviderError };
 
 function shortSha(sha: string): string {
@@ -228,6 +319,7 @@ export default function ReleaseDetailPage() {
     async function load() {
       const mode = getActiveReleaseMode();
       const provider = getReleaseProvider(mode);
+      const repository = mode === "LIVE" ? getActiveRepositoryReference() : undefined;
       setState({ status: "loading", mode });
       const release = await provider.getReleaseRecord(params.releaseId);
 
@@ -245,14 +337,16 @@ export default function ReleaseDetailPage() {
         return;
       }
 
-      setState({ status: "ready", mode, release: release.data, analysis: analysis.data, source: list?.ok ? list.source : undefined });
+      setState({ status: "ready", mode, release: release.data, analysis: analysis.data, repository: list?.ok ? list.repository : repository, source: list?.ok ? list.source : undefined });
     }
 
     load();
     const unsubscribeMode = subscribeToReleaseModeChanges(load);
+    const unsubscribeRepository = subscribeToRepositoryChanges(load);
     return () => {
       cancelled = true;
       unsubscribeMode();
+      unsubscribeRepository();
     };
   }, [params.releaseId]);
 
@@ -311,7 +405,7 @@ export default function ReleaseDetailPage() {
     );
   }
 
-  const { analysis, release, source } = state;
+  const { analysis, release, repository, source } = state;
   const { evidence } = release;
 
   return (
@@ -327,13 +421,13 @@ export default function ReleaseDetailPage() {
 
         <Panel className="p-6">
           <dl className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
-            <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Source</dt><dd className="mt-2 text-slate-100">{state.mode === "LIVE" ? "LIVE GitHub Actions" : "DEMO fixtures"}</dd></div>
-            <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Repository</dt><dd className="mt-2 font-mono text-slate-100">{state.mode === "LIVE" ? "JankoD84/release-gate" : "Deterministic scenarios"}</dd></div>
+            <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Source</dt><dd className="mt-2 text-slate-100">{state.mode === "LIVE" ? `LIVE ${repository?.provider === "gitlab" ? "GitLab" : "GitHub"}` : "DEMO fixtures"}</dd></div>
+            <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Repository</dt><dd className="mt-2 font-mono text-slate-100">{state.mode === "LIVE" ? repository?.fullPath ?? "Public repository" : "Deterministic scenarios"}</dd></div>
             <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Branch</dt><dd className="mt-2 font-mono text-slate-100">{release.branch}</dd></div>
             <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Updated</dt><dd className="mt-2 text-slate-100">{formatDate(release.updatedAt)}</dd></div>
             <div className="sm:col-span-2"><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Commit SHA</dt><dd className="mt-2 break-all font-mono text-slate-100">{release.commitSha}</dd></div>
-            {source ? <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Generated</dt><dd className="mt-2 text-slate-100">{formatDateTime(source.generatedAt)}</dd></div> : null}
-            {source ? <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Workflow run</dt><dd className="mt-2"><a className="text-cyan-100 underline-offset-4 hover:underline" href={source.workflow.runUrl} rel="noreferrer" target="_blank">GitHub Actions</a></dd></div> : null}
+            {source?.generatedAt ? <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Generated</dt><dd className="mt-2 text-slate-100">{formatDateTime(source.generatedAt)}</dd></div> : null}
+            {source?.workflow?.runUrl ? <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Workflow run</dt><dd className="mt-2"><a className="text-cyan-100 underline-offset-4 hover:underline" href={source.workflow.runUrl} rel="noreferrer" target="_blank">{source.workflow.name}</a></dd></div> : null}
           </dl>
         </Panel>
 
@@ -349,17 +443,26 @@ export default function ReleaseDetailPage() {
           </div>
         </Panel>
 
+        <Panel className="overflow-hidden">
+          <SectionHeader title="Required Actions" subtitle="Deterministic next steps derived from the current blockers and warnings. These actions do not alter the recommendation." />
+          <div className="p-6">
+            <RequiredActionsList actions={analysis.requiredActions} decision={analysis.decision} />
+          </div>
+        </Panel>
+
         <section aria-labelledby="release-evidence-title">
           <div className="mb-4"><h2 className="text-lg font-semibold text-white" id="release-evidence-title">Release Evidence</h2><p className="mt-1 text-sm text-slate-400">Four deterministic evidence surfaces drive the system recommendation.</p></div>
           <div className="grid gap-4 lg:grid-cols-2">
-            <EvidenceCard detail={`${evidence.ci.passedJobs} / ${evidence.ci.totalJobs} jobs passed`} metrics={[{ label: "Workflow", value: evidence.ci.workflow }, { label: "Duration", value: formatDuration(evidence.ci.durationSeconds) }, { label: "Passed", value: evidence.ci.passedJobs }, { label: "Failed", value: evidence.ci.failedJobs }]} status={evidence.ci.status} title="CI" tone={evidenceTone(evidence.ci.status)} />
-            <EvidenceCard detail={`${evidence.tests.passed} / ${evidence.tests.total} passed · ${evidence.tests.flaky} flaky`} metrics={[{ label: "Total", value: evidence.tests.total }, { label: "Passed", value: evidence.tests.passed }, { label: "Failed", value: evidence.tests.failed }, { label: "Coverage", value: coverageLabel(evidence.tests.coveragePercent) }]} status={evidence.tests.status} title="Tests" tone={evidenceTone(evidence.tests.status)} />
-            <EvidenceCard detail={state.mode === "LIVE" ? "Dependency security evidence from npm audit" : `${evidence.security.critical} critical · ${evidence.security.high} high · ${evidence.security.medium} medium`} metrics={[{ label: "Critical", value: evidence.security.critical }, { label: "High", value: evidence.security.high }, { label: "Medium", value: evidence.security.medium }, { label: "Low", value: evidence.security.low }]} status={evidence.security.status} title={state.mode === "LIVE" ? "Dependency audit" : "Security"} tone={evidenceTone(evidence.security.status)} />
-            <EvidenceCard detail={`${evidence.changeRisk.filesChanged} files changed · ${evidence.changeRisk.changedComponents.join(", ")}`} metrics={[{ label: "Files", value: evidence.changeRisk.filesChanged }, { label: "Added", value: evidence.changeRisk.linesAdded }, { label: "Deleted", value: evidence.changeRisk.linesDeleted }, { label: "Components", value: evidence.changeRisk.changedComponents.length }]} status={evidence.changeRisk.level} title="Change Risk" tone={riskTone(evidence.changeRisk.level)} />
+            <EvidenceCard detail={`${evidence.ci.passedJobs} / ${evidence.ci.totalJobs} jobs passed`} metrics={[{ label: "Workflow", value: evidence.ci.workflow }, { label: "Duration", value: formatDuration(evidence.ci.durationSeconds) }, { label: "Passed", value: evidence.ci.passedJobs }, { label: "Failed", value: evidence.ci.failedJobs }]} provenance={evidence.ci.provenance} status={evidence.ci.status} title="CI" tone={evidenceTone(evidence.ci.status)} />
+            <EvidenceCard detail={evidence.tests.status === "NOT_AVAILABLE" ? "No public test evidence available." : `${evidence.tests.passed} / ${evidence.tests.total} passed · ${evidence.tests.flaky} flaky`} metrics={[{ label: "Total", value: evidence.tests.total }, { label: "Passed", value: evidence.tests.passed }, { label: "Failed", value: evidence.tests.failed }, { label: "Coverage", value: coverageLabel(evidence.tests.coveragePercent) }]} provenance={evidence.tests.provenance} status={evidence.tests.status} title="Tests" tone={evidenceTone(evidence.tests.status)} />
+            <EvidenceCard detail={evidence.security.status === "NOT_AVAILABLE" ? "No public security evidence available." : `${evidence.security.critical} critical · ${evidence.security.high} high · ${evidence.security.medium} medium`} metrics={[{ label: "Critical", value: evidence.security.critical }, { label: "High", value: evidence.security.high }, { label: "Medium", value: evidence.security.medium }, { label: "Low", value: evidence.security.low }]} provenance={evidence.security.provenance} status={evidence.security.status} title="Security" tone={evidenceTone(evidence.security.status)} />
+            <EvidenceCard detail={`${evidence.changeRisk.filesChanged} files changed · ${evidence.changeRisk.changedComponents.join(", ")}`} metrics={[{ label: "Files", value: evidence.changeRisk.filesChanged }, { label: "Added", value: evidence.changeRisk.linesAdded }, { label: "Deleted", value: evidence.changeRisk.linesDeleted }, { label: "Components", value: evidence.changeRisk.changedComponents.length }]} provenance={evidence.changeRisk.provenance} status={evidence.changeRisk.level} title="Change Risk" tone={riskTone(evidence.changeRisk.level)} />
           </div>
         </section>
 
         <HumanDecisionPanel acknowledgement={acknowledgement} actionMessage={actionMessage} analysis={analysis} decisionState={decisionState} onApprove={handleApprove} onReject={handleReject} setAcknowledgement={setAcknowledgement} />
+
+        <DecisionPacketPanel analysis={analysis} decisionState={decisionState} mode={state.mode} release={release} repository={repository} />
 
         {decisionState.status === "PENDING" ? <EmptyState title="No final decision recorded" body="The release remains pending until a human approves the recommendation or rejects the release." /> : null}
       </div>
