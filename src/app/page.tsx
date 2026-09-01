@@ -39,20 +39,20 @@ type ToolGroup = {
 
 const agentPlaybookPrompts = [
   {
-    title: "Release review",
-    prompt: "Review the current release for production.\nInspect all available release evidence, explain the recommendation and required actions, and cite the evidence sources where available.\nDo not approve or reject anything.",
+    title: "Merge-readiness review",
+    prompt: "Review this open change for merge.\nInspect all available evidence, explain the system recommendation and required actions, and cite the evidence sources where available.\nDo not approve or reject anything.",
   },
   {
-    title: "Compare releases",
-    prompt: "Review the available releases and tell me which is safest to ship.\nCompare the evidence, risks, missing evidence and required actions.\nDo not make any human decision for me.",
+    title: "Compare candidates",
+    prompt: "Review the available release candidates and tell me which is safest to proceed.\nCompare the evidence, risks, missing evidence and required actions.\nDo not make any human decision for me.",
   },
   {
-    title: "Governed approval",
-    prompt: "Review the current release first.\nExplain the evidence, risks and required actions.\nIf the release is eligible, wait for my explicit approval before recording any final decision.",
+    title: "Governed authorization",
+    prompt: "Review the current candidate first.\nExplain the evidence, risks and required actions.\nIf the candidate is eligible, wait for my explicit approval before recording any final decision.",
   },
   {
     title: "Investigate blockers",
-    prompt: "Explain exactly why the current release is blocked.\nShow the blocking evidence, evidence sources and required actions before this release can become eligible for approval.",
+    prompt: "Explain exactly why the current candidate is blocked.\nShow the blocking evidence, evidence sources and required actions before this candidate can become eligible for approval.",
   },
 ] as const;
 
@@ -88,6 +88,24 @@ type DashboardState =
 
 function shortSha(sha: string): string {
   return sha.slice(0, 7);
+}
+
+function isOpenChangeCandidate(release: ReleaseWithDecision): boolean {
+  return release.candidate?.candidateType === "PULL_REQUEST" || release.candidate?.candidateType === "MERGE_REQUEST";
+}
+
+function candidateLabel(release: ReleaseWithDecision): string {
+  if (release.candidate?.candidateType === "PULL_REQUEST" && release.candidate.candidateNumber !== undefined) return `PR #${release.candidate.candidateNumber}`;
+  if (release.candidate?.candidateType === "MERGE_REQUEST" && release.candidate.candidateNumber !== undefined) return `MR !${release.candidate.candidateNumber}`;
+  if (release.candidate?.candidateType === "TAG") return `Tag ${release.version}`;
+  return release.candidate?.candidateType === "RELEASE" ? `Release ${release.version}` : release.version;
+}
+
+function candidateTarget(release: ReleaseWithDecision): string {
+  const base = release.candidate?.baseBranch ?? release.branch;
+  const head = release.candidate?.headBranch;
+
+  return head ? `${base} ← ${head}` : base;
 }
 
 function AgentPromptCard({ prompt, title }: { prompt: string; title: string }) {
@@ -179,6 +197,7 @@ export default function Home() {
 
     return {
       releases: releases.length,
+      hasOpenCandidates: state.mode === "LIVE" && releases.some(isOpenChangeCandidate),
       go: decisions.filter((decision) => decision === "GO").length,
       conditional: decisions.filter((decision) => decision === "CONDITIONAL_GO").length,
       blocked: decisions.filter((decision) => decision === "NO_GO").length,
@@ -278,19 +297,21 @@ export default function Home() {
         ) : (
           <>
             <section aria-label="Release summary" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-              <MetricCard label={state.mode === "LIVE" ? "Current release" : "Releases"} value={summary.releases} />
+              <MetricCard label={summary.hasOpenCandidates ? "Open candidates" : state.mode === "LIVE" ? "Release/tag candidates" : "Releases"} value={summary.releases} />
               <MetricCard label="GO" tone="go" value={summary.go} />
               <MetricCard label="Conditional" tone="conditional" value={summary.conditional} />
               <MetricCard label="Blocked" tone="blocked" value={summary.blocked} />
               <MetricCard label="Pending human decisions" tone="pending" value={summary.pending} />
             </section>
 
-            <div className="grid gap-6 min-[1400px]:grid-cols-[minmax(0,1fr)_340px]">
+            <div className="grid items-start gap-6 min-[1400px]:grid-cols-[minmax(0,1fr)_340px]">
               <Panel className="overflow-hidden">
                 <SectionHeader
-                  title={state.mode === "LIVE" ? "Live repository" : "Releases"}
+                  title={summary.hasOpenCandidates ? "Open candidates" : state.mode === "LIVE" ? "Live repository" : "Releases"}
                   subtitle={state.mode === "LIVE"
-                    ? "Real public repository evidence. Provider-specific CI, test, security, and change availability may vary."
+                    ? summary.hasOpenCandidates
+                      ? "Real public GitHub Pull Requests or GitLab Merge Requests analyzed before merge. Release Gate records authorization only; it does not merge code."
+                      : "No open PR/MR candidate was found, so LIVE mode is inspecting public releases or tags where available."
                     : "Deterministic Safety Scenarios: controlled scenarios for demonstrating GO, CONDITIONAL GO, NO GO, and human-governance behavior."}
                 />
                 {state.status === "loading" ? (
@@ -306,13 +327,13 @@ export default function Home() {
                             <div className="flex flex-wrap items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                                  Release
+                                  Candidate
                                 </p>
                                 <Link
-                                  className="mt-1 inline-flex max-w-full font-semibold text-white underline-offset-4 hover:text-cyan-100 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                                  className="mt-1 inline-flex max-w-full truncate font-semibold text-white underline-offset-4 hover:text-cyan-100 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
                                   href={`/releases/${release.id}`}
                                 >
-                                  {state.mode === "LIVE" ? shortSha(release.commitSha) : release.version}
+                                  {state.mode === "LIVE" ? candidateLabel(release) : release.version}
                                 </Link>
                                 <p className="mt-1 truncate text-xs leading-5 text-slate-500">{release.name}</p>
                               </div>
@@ -325,8 +346,8 @@ export default function Home() {
                             </div>
                             <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
                               <div>
-                                <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Branch</dt>
-                                <dd className="mt-1 truncate font-mono text-xs text-slate-300">{release.branch}</dd>
+                                <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Target</dt>
+                                <dd className="mt-1 truncate font-mono text-xs text-slate-300">{candidateTarget(release)}</dd>
                               </div>
                               <div>
                                 <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Risk</dt>
@@ -351,9 +372,9 @@ export default function Home() {
                     </div>
 
                     <div className="hidden xl:block">
-                      <div className="grid grid-cols-[minmax(5.5rem,0.9fr)_minmax(0,0.8fr)_auto_auto_auto_minmax(5rem,0.75fr)_auto] items-center gap-x-3 bg-slate-950/70 px-4 py-3 text-left text-xs uppercase tracking-[0.12em] text-slate-500">
-                        <div className="font-semibold">Release</div>
-                        <div className="font-semibold">Branch</div>
+                      <div className="grid grid-cols-[minmax(7rem,0.95fr)_minmax(0,0.85fr)_auto_auto_auto_minmax(5rem,0.75fr)_auto] items-center gap-x-3 bg-slate-950/70 px-4 py-3 text-left text-xs uppercase tracking-[0.12em] text-slate-500">
+                        <div className="font-semibold">Candidate</div>
+                        <div className="font-semibold">Target</div>
                         <div className="font-semibold">Risk</div>
                         <div className="max-w-36 font-semibold leading-5">System Recommendation</div>
                         <div className="max-w-32 font-semibold leading-5">Human Decision</div>
@@ -365,17 +386,17 @@ export default function Home() {
                           const finalDecision = finalDecisions[release.id] ?? "PENDING";
 
                           return (
-                            <div className="grid grid-cols-[minmax(5.5rem,0.9fr)_minmax(0,0.8fr)_auto_auto_auto_minmax(5rem,0.75fr)_auto] items-center gap-x-3 px-4 py-4 text-sm transition hover:bg-slate-800/45" key={release.id}>
+                            <div className="grid grid-cols-[minmax(7rem,0.95fr)_minmax(0,0.85fr)_auto_auto_auto_minmax(5rem,0.75fr)_auto] items-center gap-x-3 px-4 py-4 text-sm transition hover:bg-slate-800/45" key={release.id}>
                               <div className="min-w-0">
                                 <Link
                                   className="inline-block max-w-full truncate font-semibold text-white underline-offset-4 hover:text-cyan-100 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
                                   href={`/releases/${release.id}`}
                                 >
-                                  {state.mode === "LIVE" ? shortSha(release.commitSha) : release.version}
+                                  {state.mode === "LIVE" ? candidateLabel(release) : release.version}
                                 </Link>
                                 <div className="mt-1 truncate text-xs text-slate-500">{release.name}</div>
                               </div>
-                              <div className="min-w-0 truncate font-mono text-xs text-slate-300">{release.branch}</div>
+                              <div className="min-w-0 truncate font-mono text-xs text-slate-300">{candidateTarget(release)}</div>
                               <div>
                                 <Badge tone={riskTone(release.risk)}>{release.risk}</Badge>
                               </div>

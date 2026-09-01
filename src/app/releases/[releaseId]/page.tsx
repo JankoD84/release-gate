@@ -114,6 +114,27 @@ function EvidenceSource({ provenance }: { provenance?: EvidenceProvenance }) {
   );
 }
 
+function candidateLabel(release: ReleaseRecord): string {
+  if (release.candidate?.candidateType === "PULL_REQUEST" && release.candidate.candidateNumber !== undefined) return `PR #${release.candidate.candidateNumber}`;
+  if (release.candidate?.candidateType === "MERGE_REQUEST" && release.candidate.candidateNumber !== undefined) return `MR !${release.candidate.candidateNumber}`;
+  if (release.candidate?.candidateType === "TAG") return `Tag ${release.version}`;
+  return release.candidate?.candidateType === "RELEASE" ? `Release ${release.version}` : release.version;
+}
+
+function candidateKind(release: ReleaseRecord): string {
+  if (release.candidate?.candidateType === "PULL_REQUEST") return "Pull Request";
+  if (release.candidate?.candidateType === "MERGE_REQUEST") return "Merge Request";
+  if (release.candidate?.candidateType === "TAG") return "Tag";
+  return "Release";
+}
+
+function candidateBranchFlow(release: ReleaseRecord): string {
+  const base = release.candidate?.baseBranch ?? release.branch;
+  const head = release.candidate?.headBranch;
+
+  return head ? `${head} → ${base}` : base;
+}
+
 function EvidenceCard({
   detail,
   metrics,
@@ -197,12 +218,13 @@ function DecisionPacketPanel({ analysis, decisionState, mode, release, repositor
   );
 }
 
-function DecisionGate({ analysis, decisionState }: { analysis: DecisionAnalysis; decisionState: FinalDecisionState }) {
+function DecisionGate({ analysis, decisionState, release }: { analysis: DecisionAnalysis; decisionState: FinalDecisionState; release: ReleaseRecord }) {
   const finalDecision = decisionState.status === "DECIDED" ? decisionState.decision.finalDecision : "PENDING";
+  const isMergeCandidate = release.candidate?.candidateType === "PULL_REQUEST" || release.candidate?.candidateType === "MERGE_REQUEST";
 
   return (
     <Panel className="overflow-hidden">
-      <SectionHeader title="Decision Gate" subtitle="System analysis informs the decision; human authority records the final release state." />
+      <SectionHeader title="Decision Gate" subtitle={isMergeCandidate ? "Merge-readiness analysis informs the recommendation; human authority records final authorization." : "System analysis informs the decision; human authority records the final release state."} />
       <div className="grid gap-0 lg:grid-cols-[1fr_auto_1fr]">
         <div className="p-6">
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">System Recommendation</p>
@@ -211,6 +233,12 @@ function DecisionGate({ analysis, decisionState }: { analysis: DecisionAnalysis;
             <Badge tone={riskTone(analysis.confidence)}>Confidence {analysis.confidence}</Badge>
           </div>
           <p className="mt-4 text-sm leading-6 text-slate-300">{analysis.summary}</p>
+          {isMergeCandidate ? (
+            <dl className="mt-5 grid gap-3 text-sm text-slate-300 sm:grid-cols-2">
+              <div><dt className="text-slate-500">Candidate</dt><dd className="font-semibold text-slate-100">{candidateLabel(release)}</dd></div>
+              <div><dt className="text-slate-500">Target</dt><dd className="font-mono text-slate-100">{release.candidate?.baseBranch ?? release.branch}</dd></div>
+            </dl>
+          ) : null}
         </div>
         <div className="hidden items-center border-x border-slate-800 px-5 text-slate-500 lg:flex" aria-hidden="true">→</div>
         <div className="border-t border-slate-800 p-6 lg:border-t-0">
@@ -255,13 +283,13 @@ function HumanDecisionPanel({
 
   return (
     <Panel className="overflow-hidden">
-      <SectionHeader title="Human Decision" subtitle="Approval and rejection are explicit human-controlled write actions." />
+      <SectionHeader title="Human Decision" subtitle="Approval and rejection are explicit human-controlled write actions. Release Gate records authorization only; it does not merge source code or deploy." />
       <div className="p-6">
         {decisionState.status === "DECIDED" ? (
           <div className="rounded-2xl border border-emerald-400/25 bg-emerald-950/20 p-5">
             <Badge tone={decisionTone(decisionState.decision.finalDecision)}>{formatDecisionLabel(decisionState.decision.finalDecision)}</Badge>
             <h3 className="mt-4 text-lg font-semibold text-white">Decision recorded</h3>
-            <p className="mt-2 text-sm leading-6 text-slate-300">Decision recorded and ready for downstream release automation.</p>
+            <p className="mt-2 text-sm leading-6 text-slate-300">Decision recorded. Release Gate authorization does not perform an external merge or deployment.</p>
             <dl className="mt-4 grid gap-3 text-sm text-slate-300 sm:grid-cols-2">
               <div><dt className="text-slate-500">System Recommendation</dt><dd className="font-semibold text-slate-100">{formatDecisionLabel(analysis.decision)}</dd></div>
               <div><dt className="text-slate-500">Human Final Decision</dt><dd className="font-semibold text-slate-100">{formatDecisionLabel(decisionState.decision.finalDecision)}</dd></div>
@@ -275,14 +303,14 @@ function HumanDecisionPanel({
             <div>
               <label className="flex gap-3 rounded-2xl border border-slate-800 bg-slate-950/45 p-4 text-sm leading-6 text-slate-300">
                 <input checked={acknowledgement} className="mt-1 h-4 w-4 rounded border-slate-600 bg-slate-950 text-cyan-500 focus:ring-cyan-300" onChange={(event) => setAcknowledgement(event.target.checked)} type="checkbox" />
-                <span>I acknowledge the displayed system recommendation and release evidence before approving.</span>
+                <span>I acknowledge the displayed system recommendation and evidence before recording authorization.</span>
               </label>
-              {analysis.decision === "NO_GO" ? <p className="mt-3 rounded-2xl border border-rose-400/25 bg-rose-950/25 p-4 text-sm font-semibold text-rose-100">This release is hard-blocked and cannot be approved.</p> : null}
+              {analysis.decision === "NO_GO" ? <p className="mt-3 rounded-2xl border border-rose-400/25 bg-rose-950/25 p-4 text-sm font-semibold text-rose-100">This candidate is hard-blocked and cannot be approved.</p> : null}
               {actionMessage ? <p className="mt-4 text-sm leading-6 text-slate-300" role="status">{actionMessage}</p> : null}
             </div>
             <div className="flex flex-wrap gap-3 lg:justify-end">
               <button className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200" disabled={!canApprove} onClick={onApprove} type="button">{approveButtonLabel}</button>
-              <button className="rounded-full border border-rose-300/35 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:border-rose-200 hover:bg-rose-400/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-200" onClick={onReject} type="button">Reject Release</button>
+              <button className="rounded-full border border-rose-300/35 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:border-rose-200 hover:bg-rose-400/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-200" onClick={onReject} type="button">Reject Candidate</button>
             </div>
           </div>
         )}
@@ -295,10 +323,6 @@ type DetailState =
   | { status: "loading"; mode: ReleaseMode }
   | { status: "ready"; mode: ReleaseMode; release: ReleaseRecord; analysis: DecisionAnalysis; repository?: RepositoryReference; source?: PublicRepositorySnapshot["source"] }
   | { status: "error"; mode: ReleaseMode; error: ReleaseProviderError };
-
-function shortSha(sha: string): string {
-  return sha.slice(0, 7);
-}
 
 function coverageLabel(value: number | null): string {
   return value === null ? "N/A" : `${value}%`;
@@ -411,7 +435,7 @@ export default function ReleaseDetailPage() {
   return (
     <AppShell current="releases" resetAction={handleResetDemoState} resetMessage={resetMessage} status={webMcpStatus} toolCount={webMcpToolCatalog.length}>
       <div className="flex flex-col gap-6">
-        <Hero eyebrow="Release evidence" title={state.mode === "LIVE" ? `Live release ${shortSha(release.commitSha)}` : `Release ${release.version}`} subtitle="Evidence, system recommendation, and human final decision are separated for controlled release authority.">
+        <Hero eyebrow={release.candidate?.candidateType === "PULL_REQUEST" || release.candidate?.candidateType === "MERGE_REQUEST" ? "Merge readiness" : "Release evidence"} title={state.mode === "LIVE" ? `${candidateKind(release)} ${candidateLabel(release).replace(/^(PR|MR) /, "")}` : `Release ${release.version}`} subtitle={`${release.name}${release.candidate?.headBranch ? ` · ${candidateBranchFlow(release)}` : ""}. Evidence, system recommendation, and human final decision are separated for controlled authority.`}>
           <div className="flex flex-wrap gap-3 rounded-2xl border border-slate-700 bg-slate-950/55 p-4">
             <Badge tone={state.mode === "LIVE" ? "read" : "neutral"}>{state.mode}</Badge>
             <Badge tone={riskTone(release.risk)}>Risk {release.risk}</Badge>
@@ -423,15 +447,17 @@ export default function ReleaseDetailPage() {
           <dl className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
             <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Source</dt><dd className="mt-2 text-slate-100">{state.mode === "LIVE" ? `LIVE ${repository?.provider === "gitlab" ? "GitLab" : "GitHub"}` : "DEMO fixtures"}</dd></div>
             <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Repository</dt><dd className="mt-2 font-mono text-slate-100">{state.mode === "LIVE" ? repository?.fullPath ?? "Public repository" : "Deterministic scenarios"}</dd></div>
-            <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Branch</dt><dd className="mt-2 font-mono text-slate-100">{release.branch}</dd></div>
+            <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Target</dt><dd className="mt-2 min-w-0 truncate font-mono text-slate-100">{release.candidate?.baseBranch ?? release.branch}</dd></div>
             <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Updated</dt><dd className="mt-2 text-slate-100">{formatDate(release.updatedAt)}</dd></div>
+            {release.candidate?.headBranch ? <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Source branch</dt><dd className="mt-2 min-w-0 truncate font-mono text-slate-100">{release.candidate.headBranch}</dd></div> : null}
+            {release.candidate?.publicUrl ? <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Provider URL</dt><dd className="mt-2 min-w-0"><a className="inline-block max-w-full truncate text-cyan-100 underline-offset-4 hover:underline" href={release.candidate.publicUrl} rel="noreferrer" target="_blank">{candidateLabel(release)}</a></dd></div> : null}
             <div className="sm:col-span-2"><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Commit SHA</dt><dd className="mt-2 break-all font-mono text-slate-100">{release.commitSha}</dd></div>
             {source?.generatedAt ? <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Generated</dt><dd className="mt-2 text-slate-100">{formatDateTime(source.generatedAt)}</dd></div> : null}
             {source?.workflow?.runUrl ? <div><dt className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Workflow run</dt><dd className="mt-2"><a className="text-cyan-100 underline-offset-4 hover:underline" href={source.workflow.runUrl} rel="noreferrer" target="_blank">{source.workflow.name}</a></dd></div> : null}
           </dl>
         </Panel>
 
-        <DecisionGate analysis={analysis} decisionState={decisionState} />
+        <DecisionGate analysis={analysis} decisionState={decisionState} release={release} />
 
         <Panel className="overflow-hidden">
           <SectionHeader title="Decision Analysis" subtitle="No raw JSON. Only release-relevant blockers, warnings, and conditions are shown." />
@@ -464,7 +490,7 @@ export default function ReleaseDetailPage() {
 
         <DecisionPacketPanel analysis={analysis} decisionState={decisionState} mode={state.mode} release={release} repository={repository} />
 
-        {decisionState.status === "PENDING" ? <EmptyState title="No final decision recorded" body="The release remains pending until a human approves the recommendation or rejects the release." /> : null}
+        {decisionState.status === "PENDING" ? <EmptyState title="No final decision recorded" body="The candidate remains pending until a human approves the recommendation or rejects the candidate." /> : null}
       </div>
     </AppShell>
   );

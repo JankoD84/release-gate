@@ -57,6 +57,69 @@ test("GitHub adapter normalizes repository metadata, releases, CI and change dat
   assert.equal(result.snapshot.releases[0].evidence.security.provenance, undefined);
 });
 
+test("GitHub adapter discovers open pull requests as primary candidates", async () => {
+  const reference = ref("https://github.com/example/project");
+  const calls: string[] = [];
+  const fetcher = async (input: string, init?: RequestInit): Promise<Response> => {
+    assert.notEqual(init?.method, "POST");
+    assert.notEqual(init?.method, "PATCH");
+    calls.push(input);
+    return fetchMap({
+      "https://api.github.com/repos/example/project": response({ default_branch: "main", description: "Example" }),
+      "https://api.github.com/repos/example/project/pulls?state=open&per_page=20": response([
+        { number: 42, title: "Payment refactor", base: { ref: "main" }, head: { ref: "feature/payments", sha: "bbbb" }, html_url: "https://github.com/example/project/pull/42", updated_at: "2026-03-01T00:00:00.000Z" },
+        { number: 43, title: "Docs update", base: { ref: "main" }, head: { ref: "docs/readme", sha: "cccc" }, html_url: "https://github.com/example/project/pull/43", updated_at: "2026-03-02T00:00:00.000Z" },
+      ]),
+      "https://api.github.com/repos/example/project/pulls/42": response({ number: 42, title: "Payment refactor", base: { ref: "main" }, head: { ref: "feature/payments", sha: "bbbb" }, html_url: "https://github.com/example/project/pull/42", changed_files: 2, additions: 12, deletions: 3, updated_at: "2026-03-01T00:00:00.000Z" }),
+      "https://api.github.com/repos/example/project/pulls/42/files?per_page=100": response([{ filename: "src/app/payments/page.tsx", additions: 10, deletions: 2 }, { filename: "src/lib/decision/engine.ts", additions: 2, deletions: 1 }]),
+      "https://api.github.com/repos/example/project/pulls/43": response({ number: 43, title: "Docs update", base: { ref: "main" }, head: { ref: "docs/readme", sha: "cccc" }, html_url: "https://github.com/example/project/pull/43", changed_files: 1, additions: 4, deletions: 0, updated_at: "2026-03-02T00:00:00.000Z" }),
+      "https://api.github.com/repos/example/project/pulls/43/files?per_page=100": response([{ filename: "README.md", additions: 4, deletions: 0 }]),
+      "https://api.github.com/repos/example/project/actions/runs?head_sha=bbbb&per_page=20": response({ workflow_runs: [{ conclusion: "success", name: "PR CI", html_url: "https://github.com/example/project/actions/runs/42", updated_at: "2026-03-01T00:05:00.000Z" }] }),
+      "https://api.github.com/repos/example/project/actions/runs?head_sha=cccc&per_page=20": response({ workflow_runs: [{ conclusion: "failure", name: "PR CI", html_url: "https://github.com/example/project/actions/runs/43", updated_at: "2026-03-02T00:05:00.000Z" }] }),
+    } as Record<string, Response>)(input);
+  };
+  const result = await new GitHubPublicRepositoryAdapter(fetcher).getSnapshot(reference);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.snapshot.releases.length, 2);
+  assert.equal(result.snapshot.releases[0].id, "github:example%2Fproject:pr:42");
+  assert.equal(result.snapshot.releases[0].version, "PR #42");
+  assert.equal(result.snapshot.releases[0].name, "Payment refactor");
+  assert.equal(result.snapshot.releases[0].branch, "main");
+  assert.equal(result.snapshot.releases[0].commitSha, "bbbb");
+  assert.equal(result.snapshot.releases[0].candidate?.candidateType, "PULL_REQUEST");
+  assert.equal(result.snapshot.releases[0].candidate?.candidateNumber, 42);
+  assert.equal(result.snapshot.releases[0].candidate?.baseBranch, "main");
+  assert.equal(result.snapshot.releases[0].candidate?.headBranch, "feature/payments");
+  assert.equal(result.snapshot.releases[0].candidate?.headSha, "bbbb");
+  assert.equal(result.snapshot.releases[0].candidate?.publicUrl, "https://github.com/example/project/pull/42");
+  assert.equal(result.snapshot.releases[0].evidence.ci.status, "PASS");
+  assert.equal(result.snapshot.releases[1].evidence.ci.status, "FAIL");
+  assert.equal(result.snapshot.releases[0].evidence.changeRisk.filesChanged, 2);
+  assert.equal(result.snapshot.releases[0].evidence.changeRisk.linesAdded, 12);
+  assert.equal(result.snapshot.releases[0].evidence.changeRisk.linesDeleted, 3);
+  assert.deepEqual(result.snapshot.releases[0].evidence.changeRisk.changedComponents, ["release-orchestration", "web"]);
+  assert.equal(result.snapshot.releases[0].provenance?.label, "GitHub Pull Request");
+  assert.equal(result.snapshot.releases[0].evidence.ci.provenance?.label, "PR CI");
+  assert.equal(result.snapshot.releases[0].evidence.changeRisk.provenance?.label, "GitHub Pull Request changes");
+  assert.ok(!calls.some((call) => call.includes("/releases?per_page=20")), "open PRs should prevent release fallback calls");
+});
+
+test("GitHub pull request CI remains NOT_AVAILABLE when public checks are unavailable", async () => {
+  const reference = ref("https://github.com/example/project");
+  const adapter = new GitHubPublicRepositoryAdapter(fetchMap({
+    "https://api.github.com/repos/example/project": response({ default_branch: "main" }),
+    "https://api.github.com/repos/example/project/pulls?state=open&per_page=20": response([{ number: 44, title: "No CI", base: { ref: "main" }, head: { ref: "feature/no-ci", sha: "dddd" }, html_url: "https://github.com/example/project/pull/44" }]),
+    "https://api.github.com/repos/example/project/pulls/44": response({ number: 44, title: "No CI", base: { ref: "main" }, head: { ref: "feature/no-ci", sha: "dddd" }, changed_files: 1, additions: 1, deletions: 0, html_url: "https://github.com/example/project/pull/44" }),
+    "https://api.github.com/repos/example/project/pulls/44/files?per_page=100": response([{ filename: "src/app/page.tsx", additions: 1, deletions: 0 }]),
+    "https://api.github.com/repos/example/project/actions/runs?head_sha=dddd&per_page=20": response({ workflow_runs: [] }),
+  }));
+
+  const result = await adapter.getSnapshot(reference);
+  assert.equal(result.ok, true);
+  assert.equal(result.snapshot.releases[0].evidence.ci.status, "NOT_AVAILABLE");
+});
+
 test("GitHub adapter falls back to tags when releases are empty", async () => {
   const reference = ref("https://github.com/example/project.git");
   const adapter = new GitHubPublicRepositoryAdapter(fetchMap({
@@ -85,6 +148,66 @@ test("GitHub repository not found and rate limits are typed", async () => {
 
   const rateLimited = mapProviderResponseError("github", response({ message: "limit" }, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "123" }));
   assert.equal(rateLimited.code, "PROVIDER_RATE_LIMITED");
+});
+
+test("GitLab adapter discovers open merge requests as primary candidates", async () => {
+  const reference = ref("https://gitlab.com/example/subgroup/project");
+  const path = "example%2Fsubgroup%2Fproject";
+  const calls: string[] = [];
+  const fetcher = async (input: string, init?: RequestInit): Promise<Response> => {
+    assert.notEqual(init?.method, "POST");
+    assert.notEqual(init?.method, "PUT");
+    calls.push(input);
+    return fetchMap({
+      [`https://gitlab.com/api/v4/projects/${path}`]: response({ default_branch: "main", description: "GitLab project" }),
+      [`https://gitlab.com/api/v4/projects/${path}/merge_requests?state=opened&per_page=20`]: response([
+        { iid: 17, title: "Payment refactor", target_branch: "main", source_branch: "feature/payments", sha: "bbbb", web_url: "https://gitlab.com/example/subgroup/project/-/merge_requests/17", updated_at: "2026-03-01T00:00:00.000Z" },
+        { iid: 18, title: "Failing change", target_branch: "main", source_branch: "feature/fail", sha: "cccc", web_url: "https://gitlab.com/example/subgroup/project/-/merge_requests/18", updated_at: "2026-03-02T00:00:00.000Z" },
+      ]),
+      [`https://gitlab.com/api/v4/projects/${path}/merge_requests/17/changes`]: response({ iid: 17, title: "Payment refactor", target_branch: "main", source_branch: "feature/payments", sha: "bbbb", web_url: "https://gitlab.com/example/subgroup/project/-/merge_requests/17", changes: [{ new_path: "src/app/payments/page.tsx", diff: "@@\n+added\n-old" }] }),
+      [`https://gitlab.com/api/v4/projects/${path}/merge_requests/18/changes`]: response({ iid: 18, title: "Failing change", target_branch: "main", source_branch: "feature/fail", sha: "cccc", web_url: "https://gitlab.com/example/subgroup/project/-/merge_requests/18", changes: [{ new_path: "src/lib/webmcp/register-tools.ts", diff: "@@\n+added" }] }),
+      [`https://gitlab.com/api/v4/projects/${path}/merge_requests/17/pipelines?per_page=20`]: response([{ status: "success", web_url: "https://gitlab.com/example/subgroup/project/-/pipelines/17", updated_at: "2026-03-01T00:05:00.000Z" }]),
+      [`https://gitlab.com/api/v4/projects/${path}/merge_requests/18/pipelines?per_page=20`]: response([{ status: "failed", web_url: "https://gitlab.com/example/subgroup/project/-/pipelines/18", updated_at: "2026-03-02T00:05:00.000Z" }]),
+    } as Record<string, Response>)(input);
+  };
+  const result = await new GitLabPublicRepositoryAdapter(fetcher).getSnapshot(reference);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.snapshot.repository.namespace, "example/subgroup");
+  assert.equal(result.snapshot.releases.length, 2);
+  assert.equal(result.snapshot.releases[0].id, "gitlab:example%2Fsubgroup%2Fproject:mr:17");
+  assert.equal(result.snapshot.releases[0].version, "MR !17");
+  assert.equal(result.snapshot.releases[0].candidate?.candidateType, "MERGE_REQUEST");
+  assert.equal(result.snapshot.releases[0].candidate?.candidateNumber, 17);
+  assert.equal(result.snapshot.releases[0].candidate?.baseBranch, "main");
+  assert.equal(result.snapshot.releases[0].candidate?.headBranch, "feature/payments");
+  assert.equal(result.snapshot.releases[0].candidate?.headSha, "bbbb");
+  assert.equal(result.snapshot.releases[0].candidate?.publicUrl, "https://gitlab.com/example/subgroup/project/-/merge_requests/17");
+  assert.equal(result.snapshot.releases[0].evidence.ci.status, "PASS");
+  assert.equal(result.snapshot.releases[1].evidence.ci.status, "FAIL");
+  assert.equal(result.snapshot.releases[0].evidence.changeRisk.filesChanged, 1);
+  assert.equal(result.snapshot.releases[0].evidence.changeRisk.linesAdded, 1);
+  assert.equal(result.snapshot.releases[0].evidence.changeRisk.linesDeleted, 1);
+  assert.equal(result.snapshot.releases[0].provenance?.label, "GitLab Merge Request");
+  assert.equal(result.snapshot.releases[0].evidence.ci.provenance?.label, "GitLab Merge Request pipelines");
+  assert.equal(result.snapshot.releases[0].evidence.changeRisk.provenance?.label, "GitLab Merge Request changes");
+  assert.ok(!calls.some((call) => call.includes("/releases?per_page=20")), "open MRs should prevent release fallback calls");
+});
+
+test("GitLab merge request pipeline remains NOT_AVAILABLE when public pipeline evidence is unavailable", async () => {
+  const reference = ref("https://gitlab.com/group/project");
+  const path = "group%2Fproject";
+  const adapter = new GitLabPublicRepositoryAdapter(fetchMap({
+    [`https://gitlab.com/api/v4/projects/${path}`]: response({ default_branch: "main" }),
+    [`https://gitlab.com/api/v4/projects/${path}/merge_requests?state=opened&per_page=20`]: response([{ iid: 19, title: "No pipeline", target_branch: "main", source_branch: "feature/no-pipeline", sha: "dddd", web_url: "https://gitlab.com/group/project/-/merge_requests/19" }]),
+    [`https://gitlab.com/api/v4/projects/${path}/merge_requests/19/changes`]: response({ iid: 19, title: "No pipeline", target_branch: "main", source_branch: "feature/no-pipeline", sha: "dddd", web_url: "https://gitlab.com/group/project/-/merge_requests/19", changes: [{ new_path: "src/app/page.tsx", diff: "@@\n+added" }] }),
+    [`https://gitlab.com/api/v4/projects/${path}/merge_requests/19/pipelines?per_page=20`]: response([]),
+    [`https://gitlab.com/api/v4/projects/${path}/pipelines?sha=dddd&per_page=20`]: response([]),
+  }));
+
+  const result = await adapter.getSnapshot(reference);
+  assert.equal(result.ok, true);
+  assert.equal(result.snapshot.releases[0].evidence.ci.status, "NOT_AVAILABLE");
 });
 
 test("GitLab adapter normalizes nested namespace releases, pipelines and compare data", async () => {
@@ -134,6 +257,31 @@ test("GitLab adapter falls back to tags when release endpoint is unavailable", a
   assert.equal(result.snapshot.releases[0].evidence.ci.status, "NOT_AVAILABLE");
 });
 
+test("no open candidate and no release or tag returns intentional empty state", async () => {
+  const githubReference = ref("https://github.com/example/empty");
+  const github = await new GitHubPublicRepositoryAdapter(fetchMap({
+    "https://api.github.com/repos/example/empty": response({ default_branch: "main" }),
+    "https://api.github.com/repos/example/empty/pulls?state=open&per_page=20": response([]),
+    "https://api.github.com/repos/example/empty/releases?per_page=20": response([]),
+    "https://api.github.com/repos/example/empty/tags?per_page=20": response([]),
+  })).getSnapshot(githubReference);
+
+  assert.equal(github.ok, true);
+  assert.equal(github.snapshot.releases.length, 0);
+
+  const gitlabReference = ref("https://gitlab.com/example/empty");
+  const path = "example%2Fempty";
+  const gitlab = await new GitLabPublicRepositoryAdapter(fetchMap({
+    [`https://gitlab.com/api/v4/projects/${path}`]: response({ default_branch: "main" }),
+    [`https://gitlab.com/api/v4/projects/${path}/merge_requests?state=opened&per_page=20`]: response([]),
+    [`https://gitlab.com/api/v4/projects/${path}/releases?per_page=20`]: response([]),
+    [`https://gitlab.com/api/v4/projects/${path}/repository/tags?per_page=20`]: response([]),
+  })).getSnapshot(gitlabReference);
+
+  assert.equal(gitlab.ok, true);
+  assert.equal(gitlab.snapshot.releases.length, 0);
+});
+
 test("provider-normalized equivalent evidence produces equivalent domain behavior", () => {
   const base: Omit<ReleaseRecord, "id" | "name"> = {
     version: "v1",
@@ -149,10 +297,12 @@ test("provider-normalized equivalent evidence produces equivalent domain behavio
     },
   };
 
-  const github = analyzeReleaseRecord({ ...base, id: "github:example%2Fproject:v1", name: "GitHub" }).data;
-  const gitlab = analyzeReleaseRecord({ ...base, id: "gitlab:example%2Fproject:v1", name: "GitLab" }).data;
+  const github = analyzeReleaseRecord({ ...base, id: "github:example%2Fproject:pr:1", name: "GitHub", candidate: { candidateType: "PULL_REQUEST", candidateNumber: 1, title: "Clean", baseBranch: "main", headBranch: "feature", headSha: "aaaa", state: "OPEN" } }).data;
+  const gitlab = analyzeReleaseRecord({ ...base, id: "gitlab:example%2Fproject:mr:1", name: "GitLab", candidate: { candidateType: "MERGE_REQUEST", candidateNumber: 1, title: "Clean", baseBranch: "main", headBranch: "feature", headSha: "aaaa", state: "OPEN" } }).data;
+  const release = analyzeReleaseRecord({ ...base, id: "github:example%2Fproject:release:v1", name: "Release", candidate: { candidateType: "RELEASE", title: "Clean", baseBranch: "main", headSha: "aaaa", state: "RELEASED" } }).data;
 
   assert.equal(github.decision, gitlab.decision);
+  assert.equal(github.decision, release.decision);
   assert.equal(github.decision, "CONDITIONAL_GO");
   assert.deepEqual(github.warnings.map((warning) => warning.code), gitlab.warnings.map((warning) => warning.code));
   assert.deepEqual(github.requiredActions.map((action) => action.code), gitlab.requiredActions.map((action) => action.code));
