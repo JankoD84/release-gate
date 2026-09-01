@@ -33,6 +33,8 @@ import { webMcpToolCatalog } from "@/lib/webmcp/register-tools";
 
 type HumanDecisionLabel = ReleaseDecision | "PENDING";
 
+const candidateTableGrid = "grid-cols-[minmax(240px,1.6fr)_minmax(160px,1fr)_100px_200px_170px_130px_90px]";
+
 type ToolGroup = {
   heading: string;
   tools: readonly string[];
@@ -107,6 +109,20 @@ function candidateTarget(release: ReleaseWithDecision): string {
   const head = release.candidate?.headBranch;
 
   return head ? `${base} ← ${head}` : base;
+}
+
+function candidateDisplay(release: ReleaseWithDecision, mode: ReleaseMode): { primary: string; secondary: string } {
+  if (mode === "LIVE" && !isOpenChangeCandidate(release) && release.version.includes("@")) {
+    return {
+      primary: `Release ${release.branch}`,
+      secondary: `${release.name} · ${release.version}`,
+    };
+  }
+
+  return {
+    primary: mode === "LIVE" ? candidateLabel(release) : release.version,
+    secondary: release.name,
+  };
 }
 
 function AgentPromptCard({ prompt, title }: { prompt: string; title: string }) {
@@ -202,9 +218,8 @@ export default function Home() {
       go: decisions.filter((decision) => decision === "GO").length,
       conditional: decisions.filter((decision) => decision === "CONDITIONAL_GO").length,
       blocked: decisions.filter((decision) => decision === "NO_GO").length,
-      pending: Object.values(finalDecisions).filter((decision) => decision === "PENDING").length,
     };
-  }, [finalDecisions, state]);
+  }, [state]);
 
   function handleResetDemoState() {
     if (window.confirm("Reset local decisions? This clears browser-local final decisions and activity only.")) {
@@ -238,6 +253,7 @@ export default function Home() {
       resetMessage={resetMessage}
       status={webMcpStatus}
       toolCount={webMcpToolCatalog.length}
+      contentClassName="max-w-[1520px]"
     >
       <div className="flex flex-col gap-6">
         <Hero
@@ -297,15 +313,14 @@ export default function Home() {
           />
         ) : (
           <>
-            <section aria-label="Release summary" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-              <MetricCard label={summary.hasOpenCandidates ? "Open candidates" : state.mode === "LIVE" ? "Release/tag candidates" : "Releases"} value={summary.releases} />
+            <section aria-label="Release summary" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <MetricCard label={summary.hasOpenCandidates ? "Candidates" : "Releases"} value={summary.releases} />
               <MetricCard label="GO" tone="go" value={summary.go} />
               <MetricCard label="Conditional" tone="conditional" value={summary.conditional} />
               <MetricCard label="Blocked" tone="blocked" value={summary.blocked} />
-              <MetricCard label="Pending human decisions" tone="pending" value={summary.pending} />
             </section>
 
-            <div className="grid items-start gap-6 min-[1400px]:grid-cols-[minmax(0,1fr)_340px]">
+            <div className="grid items-start gap-6">
               <Panel className="overflow-hidden">
                 <SectionHeader
                   title={summary.hasOpenCandidates ? "Open candidates" : state.mode === "LIVE" ? "Live repository" : "Releases"}
@@ -331,12 +346,12 @@ export default function Home() {
                                   Candidate
                                 </p>
                                 <Link
-                                  className="mt-1 inline-flex max-w-full truncate font-semibold text-white underline-offset-4 hover:text-cyan-100 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                                  className="mt-1 inline-flex max-w-full font-semibold leading-6 text-white underline-offset-4 hover:text-cyan-100 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
                                   href={releaseDetailHref(release.id)}
                                 >
-                                  {state.mode === "LIVE" ? candidateLabel(release) : release.version}
+                                  {candidateDisplay(release, state.mode).primary}
                                 </Link>
-                                <p className="mt-1 truncate text-xs leading-5 text-slate-500">{release.name}</p>
+                                <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{candidateDisplay(release, state.mode).secondary}</p>
                               </div>
                               <Link
                                 className="inline-flex rounded-full border border-cyan-300/30 px-3 py-1.5 text-sm font-semibold text-cyan-100 transition hover:border-cyan-200 hover:bg-cyan-300/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
@@ -346,21 +361,21 @@ export default function Home() {
                               </Link>
                             </div>
                             <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                              <div className="sm:col-span-2">
+                                <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Recommendation</dt>
+                                <dd className="mt-1"><Badge tone={decisionTone(release.decision)}>{formatDecisionLabel(release.decision)}</Badge></dd>
+                              </div>
                               <div>
-                                <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Target</dt>
-                                <dd className="mt-1 truncate font-mono text-xs text-slate-300">{candidateTarget(release)}</dd>
+                                <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Human Decision</dt>
+                                <dd className="mt-1"><Badge tone={decisionTone(finalDecision)}>{formatDecisionLabel(finalDecision)}</Badge></dd>
                               </div>
                               <div>
                                 <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Risk</dt>
                                 <dd className="mt-1"><Badge tone={riskTone(release.risk)}>{release.risk}</Badge></dd>
                               </div>
                               <div>
-                                <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">System Recommendation</dt>
-                                <dd className="mt-1"><Badge tone={decisionTone(release.decision)}>{formatDecisionLabel(release.decision)}</Badge></dd>
-                              </div>
-                              <div>
-                                <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Human Decision</dt>
-                                <dd className="mt-1"><Badge tone={decisionTone(finalDecision)}>{formatDecisionLabel(finalDecision)}</Badge></dd>
+                                <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Target</dt>
+                                <dd className="mt-1 wrap-break-word font-mono text-xs text-slate-300">{candidateTarget(release)}</dd>
                               </div>
                               <div>
                                 <dt className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Updated</dt>
@@ -372,13 +387,13 @@ export default function Home() {
                       })}
                     </div>
 
-                    <div className="hidden xl:block">
-                      <div className="grid grid-cols-[minmax(7rem,0.95fr)_minmax(0,0.85fr)_auto_auto_auto_minmax(5rem,0.75fr)_auto] items-center gap-x-3 bg-slate-950/70 px-4 py-3 text-left text-xs uppercase tracking-[0.12em] text-slate-500">
+                    <div className="hidden overflow-x-auto xl:block">
+                      <div className={`grid min-w-305 ${candidateTableGrid} items-center gap-x-5 bg-slate-950/70 px-5 py-3 text-left text-[0.7rem] uppercase tracking-[0.12em] text-slate-500`}>
                         <div className="font-semibold">Candidate</div>
                         <div className="font-semibold">Target</div>
                         <div className="font-semibold">Risk</div>
-                        <div className="max-w-36 font-semibold leading-5">System Recommendation</div>
-                        <div className="max-w-32 font-semibold leading-5">Human Decision</div>
+                        <div className="whitespace-nowrap font-semibold">System Recommendation</div>
+                        <div className="whitespace-nowrap font-semibold">Human Decision</div>
                         <div className="font-semibold">Updated</div>
                         <div className="font-semibold">Action</div>
                       </div>
@@ -387,26 +402,26 @@ export default function Home() {
                           const finalDecision = finalDecisions[release.id] ?? "PENDING";
 
                           return (
-                            <div className="grid grid-cols-[minmax(7rem,0.95fr)_minmax(0,0.85fr)_auto_auto_auto_minmax(5rem,0.75fr)_auto] items-center gap-x-3 px-4 py-4 text-sm transition hover:bg-slate-800/45" key={release.id}>
+                            <div className={`grid min-w-305 ${candidateTableGrid} items-center gap-x-5 px-5 py-4 text-left text-sm transition hover:bg-slate-800/45`} key={release.id}>
                               <div className="min-w-0">
                                 <Link
-                                  className="inline-block max-w-full truncate font-semibold text-white underline-offset-4 hover:text-cyan-100 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                                  className="inline-block max-w-full font-semibold leading-6 text-white underline-offset-4 hover:text-cyan-100 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
                                   href={releaseDetailHref(release.id)}
                                 >
-                                  {state.mode === "LIVE" ? candidateLabel(release) : release.version}
+                                  {candidateDisplay(release, state.mode).primary}
                                 </Link>
-                                <div className="mt-1 truncate text-xs text-slate-500">{release.name}</div>
+                                <div className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{candidateDisplay(release, state.mode).secondary}</div>
                               </div>
-                              <div className="min-w-0 truncate font-mono text-xs text-slate-300">{candidateTarget(release)}</div>
-                              <div>
+                              <div className="min-w-0 wrap-break-word font-mono text-xs leading-5 text-slate-300">{candidateTarget(release)}</div>
+                              <div className="flex items-center">
                                 <Badge tone={riskTone(release.risk)}>{release.risk}</Badge>
                               </div>
-                              <div>
+                              <div className="flex items-center">
                                 <Badge tone={decisionTone(release.decision)}>
                                   {formatDecisionLabel(release.decision)}
                                 </Badge>
                               </div>
-                              <div>
+                              <div className="flex items-center">
                                 <Badge tone={decisionTone(finalDecision)}>
                                   {formatDecisionLabel(finalDecision)}
                                 </Badge>
@@ -429,7 +444,7 @@ export default function Home() {
                 )}
               </Panel>
 
-              <Panel className="overflow-hidden">
+              <Panel className="max-w-md overflow-hidden">
                 <SectionHeader
                   title="Agent Interface"
                   subtitle="The same 11 WebMCP tools operate against the currently active repository or demo mode."

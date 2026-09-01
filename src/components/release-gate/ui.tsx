@@ -172,6 +172,7 @@ function ModeSwitch() {
 
 export function AppShell({
   children,
+  contentClassName = "max-w-7xl",
   current,
   resetAction,
   resetMessage,
@@ -179,6 +180,7 @@ export function AppShell({
   toolCount,
 }: {
   children: ReactNode;
+  contentClassName?: string;
   current: "releases" | "activity";
   resetAction: () => void;
   resetMessage?: string | null;
@@ -236,7 +238,7 @@ export function AppShell({
           </div>
         ) : null}
       </header>
-      <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">{children}</div>
+      <div className={`mx-auto w-full px-4 py-8 sm:px-6 lg:px-8 ${contentClassName}`}>{children}</div>
     </main>
   );
 }
