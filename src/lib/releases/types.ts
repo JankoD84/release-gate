@@ -23,13 +23,45 @@ export type EvidenceProvenance = {
   observedAt?: string;
 };
 
-export type CiStatus = "PASS" | "FAIL" | "NOT_AVAILABLE";
+export type CiStatus = "PASS" | "FAIL" | "PENDING" | "NOT_AVAILABLE";
+
+export type CiCheck = {
+  name: string;
+  status: string;
+  conclusion: string;
+  headSha: string;
+  startedAt?: string;
+  completedAt?: string;
+  observedAt?: string;
+  provenance?: EvidenceProvenance;
+};
+
+export type CiSummary = {
+  total: number;
+  passed: number;
+  failed: number;
+  pending: number;
+};
 
 export type TestStatus = "PASS" | "WARNING" | "FAIL" | "NOT_AVAILABLE";
 
 export type SecurityStatus = "PASS" | "WARNING" | "FAIL" | "NOT_AVAILABLE";
 
 export type ChangeRiskLevel = "LOW" | "MEDIUM" | "HIGH";
+
+export type RiskReasonCode =
+  | "LARGE_CHANGE_SURFACE"
+  | "CRITICAL_COMPONENT_CHANGED"
+  | "HIGH_FILE_COUNT"
+  | "HIGH_ADDITION_COUNT"
+  | "HIGH_DELETION_COUNT"
+  | "MULTIPLE_COMPONENTS_CHANGED";
+
+export type RiskFingerprint = {
+  riskReasons: readonly RiskReasonCode[];
+  changedAreas: readonly string[];
+  criticalComponents: readonly string[];
+};
 
 export type ReleaseCandidateType = "PULL_REQUEST" | "MERGE_REQUEST" | "RELEASE" | "TAG";
 
@@ -65,7 +97,10 @@ export type CiEvidence = {
   totalJobs: number;
   passedJobs: number;
   failedJobs: number;
+  pendingJobs?: number;
   durationSeconds: number;
+  checks?: readonly CiCheck[];
+  summary?: CiSummary;
   provenance?: EvidenceProvenance;
 };
 
@@ -95,6 +130,10 @@ export type ChangeRiskEvidence = {
   linesDeleted: number;
   changedComponents: readonly string[];
   reasons: readonly string[];
+  riskReasons?: readonly RiskReasonCode[];
+  changedAreas?: readonly string[];
+  criticalComponents?: readonly string[];
+  fingerprint?: RiskFingerprint;
   provenance?: EvidenceProvenance;
 };
 

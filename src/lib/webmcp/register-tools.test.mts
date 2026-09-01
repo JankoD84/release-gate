@@ -80,6 +80,9 @@ test("WebMCP readOnlyHint annotations match safety semantics", () => {
   for (const tool of webMcpToolCatalog) {
     assert.equal(tool.annotations?.readOnlyHint, !writeToolNames.has(tool.name), tool.name);
   }
+
+  assert.equal(webMcpToolCatalog.filter((tool) => tool.annotations.readOnlyHint).length, 9);
+  assert.equal(webMcpToolCatalog.filter((tool) => !tool.annotations.readOnlyHint).length, 2);
 });
 
 test("WebMCP input schemas are strict and consistent", () => {
@@ -177,6 +180,25 @@ test("analyze_release execution returns CONDITIONAL_GO for release-250", async (
   assert.ok(analysis.warnings.length > 0);
   assert.ok(Array.isArray(analysis.requiredActions));
   assert.ok(analysis.requiredActions.some((action) => action.code === "INVESTIGATE_FLAKY_TESTS"));
+  assertRecord(analysis.evidenceCompleteness);
+  assertRecord(analysis.evidenceFreshness);
+  assertRecord(analysis.riskFingerprint);
+  assertRecord(analysis.decisionPath);
+});
+
+test("WebMCP evidence outputs include additive intelligence fields", async () => {
+  const ciResult = await executeTool("get_ci_status", { releaseId: "release-240" });
+  const changeRiskResult = await executeTool("get_change_risk", { releaseId: "release-260" });
+
+  const ci = ciResult.evidence;
+  const changeRisk = changeRiskResult.evidence;
+
+  assertRecord(ci);
+  assertRecord(changeRisk);
+  assertRecord(changeRisk.fingerprint);
+  assert.ok(Array.isArray(changeRisk.riskReasons));
+  assert.ok(Array.isArray(changeRisk.changedAreas));
+  assert.ok(Array.isArray(changeRisk.criticalComponents));
 });
 
 test("analyze_release execution returns NO_GO for release-260", async () => {

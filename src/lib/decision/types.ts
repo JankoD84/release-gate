@@ -1,4 +1,5 @@
-import type { ReleaseEvidence, ReleaseLookupResult } from "../releases/types.ts";
+import type { ReleaseEvidence, ReleaseLookupResult, RiskFingerprint } from "../releases/types.ts";
+import type { DecisionPath, EvidenceCompleteness, EvidenceFreshness } from "./intelligence.ts";
 
 export type ReleaseDecision = "GO" | "CONDITIONAL_GO" | "NO_GO";
 
@@ -32,6 +33,10 @@ export type DecisionAnalysis = {
   warnings: readonly DecisionEvidenceItem[];
   conditions: readonly string[];
   requiredActions: readonly RequiredAction[];
+  evidenceCompleteness: EvidenceCompleteness;
+  evidenceFreshness: EvidenceFreshness;
+  riskFingerprint: RiskFingerprint;
+  decisionPath: DecisionPath;
   summary: string;
   evaluatedAt: string;
 };

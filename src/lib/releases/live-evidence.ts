@@ -3,6 +3,7 @@ import type {
   CiEvidence,
   ReleaseRecord,
   ReleaseRisk,
+  RiskReasonCode,
   SecurityEvidence,
   TestEvidence,
 } from "./types.ts";
@@ -74,7 +75,7 @@ function isRisk(value: unknown): value is ReleaseRisk {
 function isCiEvidence(value: unknown): value is CiEvidence {
   return (
     isRecord(value) &&
-    (value.status === "PASS" || value.status === "FAIL" || value.status === "NOT_AVAILABLE") &&
+    (value.status === "PASS" || value.status === "FAIL" || value.status === "PENDING" || value.status === "NOT_AVAILABLE") &&
     typeof value.workflow === "string" &&
     isNonNegativeInteger(value.totalJobs) &&
     isNonNegativeInteger(value.passedJobs) &&
@@ -216,10 +217,14 @@ export function deriveChangedComponents(paths: readonly string[]): readonly stri
   return [...components].sort();
 }
 
+const criticalChangedComponents = new Set(["authentication", "payments", "release-orchestration"]);
+
 export function normalizeGitChangeRisk(stats: GitChangeStats): ChangeRiskEvidence {
   const changedComponents = deriveChangedComponents(stats.changedFiles);
+  const criticalComponents = changedComponents.filter((component) => criticalChangedComponents.has(component));
   const totalLines = stats.linesAdded + stats.linesDeleted;
   const reasons: string[] = [];
+  const riskReasons: RiskReasonCode[] = [];
 
   if (stats.filesChanged === 0) {
     reasons.push("No changed files were detected in the evaluated Git range.");
@@ -232,6 +237,13 @@ export function normalizeGitChangeRisk(stats: GitChangeStats): ChangeRiskEvidenc
   }
 
   let level: ChangeRiskEvidence["level"] = "LOW";
+
+  if (stats.filesChanged >= 40) riskReasons.push("HIGH_FILE_COUNT");
+  if (stats.linesAdded >= 1000) riskReasons.push("HIGH_ADDITION_COUNT");
+  if (stats.linesDeleted >= 500) riskReasons.push("HIGH_DELETION_COUNT");
+  if (changedComponents.length >= 5) riskReasons.push("MULTIPLE_COMPONENTS_CHANGED");
+  if (criticalComponents.length > 0) riskReasons.push("CRITICAL_COMPONENT_CHANGED");
+  if (stats.filesChanged >= 40 || totalLines >= 1500 || changedComponents.length >= 5) riskReasons.unshift("LARGE_CHANGE_SURFACE");
 
   if (stats.filesChanged >= 40 || totalLines >= 1500 || changedComponents.length >= 5) {
     level = "HIGH";
@@ -250,6 +262,14 @@ export function normalizeGitChangeRisk(stats: GitChangeStats): ChangeRiskEvidenc
     linesDeleted: stats.linesDeleted,
     changedComponents,
     reasons,
+    riskReasons: [...new Set(riskReasons)],
+    changedAreas: changedComponents,
+    criticalComponents,
+    fingerprint: {
+      riskReasons: [...new Set(riskReasons)],
+      changedAreas: changedComponents,
+      criticalComponents,
+    },
   };
 }
 

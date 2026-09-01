@@ -252,3 +252,133 @@ test("provider-equivalent normalized evidence produces equivalent required actio
 
   assert.deepEqual(github.requiredActions, gitlab.requiredActions);
 });
+
+test("evidence completeness is 4/4 when all surfaces are verified", () => {
+  const analysis = evaluateReleaseEvidence("unit-complete", cleanEvidence, { evaluatedAt });
+
+  assert.deepEqual(analysis.evidenceCompleteness, {
+    verifiedSurfaces: 4,
+    totalSurfaces: 4,
+    percentage: 100,
+    missingSurfaces: [],
+  });
+});
+
+test("evidence completeness is 1/4 with deterministic missing evidence list", () => {
+  const analysis = evaluateReleaseEvidence(
+    "unit-one-surface",
+    {
+      ...cleanEvidence,
+      ci: { ...cleanEvidence.ci, status: "NOT_AVAILABLE", totalJobs: 0, passedJobs: 0 },
+      tests: { ...cleanEvidence.tests, status: "NOT_AVAILABLE", total: 0, passed: 0 },
+      security: { ...cleanEvidence.security, status: "NOT_AVAILABLE" },
+    },
+    { evaluatedAt },
+  );
+
+  assert.equal(analysis.evidenceCompleteness.verifiedSurfaces, 1);
+  assert.equal(analysis.evidenceCompleteness.percentage, 25);
+  assert.deepEqual(analysis.evidenceCompleteness.missingSurfaces, ["CI", "TESTS", "SECURITY"]);
+});
+
+test("evidence completeness is 0/4 when every surface is unavailable", () => {
+  const analysis = evaluateReleaseEvidence(
+    "unit-zero-surfaces",
+    {
+      ci: { ...cleanEvidence.ci, status: "NOT_AVAILABLE", totalJobs: 0, passedJobs: 0 },
+      tests: { ...cleanEvidence.tests, status: "NOT_AVAILABLE", total: 0, passed: 0 },
+      security: { ...cleanEvidence.security, status: "NOT_AVAILABLE" },
+      changeRisk: {
+        ...cleanEvidence.changeRisk,
+        reasons: ["github public change evidence is unavailable for this release candidate."],
+      },
+    },
+    { evaluatedAt },
+  );
+
+  assert.equal(analysis.evidenceCompleteness.verifiedSurfaces, 0);
+  assert.equal(analysis.evidenceCompleteness.percentage, 0);
+  assert.deepEqual(analysis.evidenceCompleteness.missingSurfaces, ["CI", "TESTS", "SECURITY", "CHANGE_RISK"]);
+});
+
+test("freshness derives CURRENT STALE and UNKNOWN conservatively", () => {
+  const analysis = evaluateReleaseEvidence(
+    "unit-freshness",
+    {
+      ...cleanEvidence,
+      ci: { ...cleanEvidence.ci, provenance: { provider: "github", repository: "example/project", sourceType: "workflow", label: "CI", observedAt: "2026-08-30T12:00:00.000Z" } },
+      tests: { ...cleanEvidence.tests, provenance: { provider: "github", repository: "example/project", sourceType: "workflow", label: "Tests", observedAt: "2026-08-01T12:00:00.000Z" } },
+    },
+    { evaluatedAt },
+  );
+
+  assert.equal(analysis.evidenceFreshness.CI.state, "CURRENT");
+  assert.equal(analysis.evidenceFreshness.TESTS.state, "STALE");
+  assert.equal(analysis.evidenceFreshness.SECURITY.state, "UNKNOWN");
+  assert.equal(analysis.evidenceFreshness.CHANGE_RISK.state, "UNKNOWN");
+});
+
+test("deterministic risk reason codes and critical components are derived from change data", () => {
+  const analysis = evaluateReleaseEvidence(
+    "unit-risk-fingerprint",
+    {
+      ...cleanEvidence,
+      changeRisk: {
+        ...cleanEvidence.changeRisk,
+        level: "HIGH",
+        filesChanged: 45,
+        linesAdded: 1200,
+        linesDeleted: 600,
+        changedComponents: ["authentication", "payments", "release-orchestration", "web", "ci"],
+        riskReasons: ["LARGE_CHANGE_SURFACE", "HIGH_FILE_COUNT", "HIGH_ADDITION_COUNT", "HIGH_DELETION_COUNT", "MULTIPLE_COMPONENTS_CHANGED", "CRITICAL_COMPONENT_CHANGED"],
+        changedAreas: ["authentication", "payments", "release-orchestration", "web", "ci"],
+        criticalComponents: ["authentication", "payments", "release-orchestration"],
+      },
+    },
+    { evaluatedAt },
+  );
+
+  assert.deepEqual(analysis.riskFingerprint.riskReasons, ["LARGE_CHANGE_SURFACE", "HIGH_FILE_COUNT", "HIGH_ADDITION_COUNT", "HIGH_DELETION_COUNT", "MULTIPLE_COMPONENTS_CHANGED", "CRITICAL_COMPONENT_CHANGED"]);
+  assert.deepEqual(analysis.riskFingerprint.criticalComponents, ["authentication", "payments", "release-orchestration"]);
+});
+
+test("decisionPath preserves required-action ordering and does not promise GO", () => {
+  const analysis = evaluateReleaseEvidence(
+    "unit-decision-path",
+    {
+      ...cleanEvidence,
+      ci: { ...cleanEvidence.ci, status: "NOT_AVAILABLE", totalJobs: 0, passedJobs: 0 },
+      tests: { ...cleanEvidence.tests, status: "NOT_AVAILABLE", total: 0, passed: 0, flaky: 0 },
+      security: { ...cleanEvidence.security, status: "NOT_AVAILABLE" },
+      changeRisk: { ...cleanEvidence.changeRisk, level: "HIGH", changedComponents: ["payments"] },
+    },
+    { evaluatedAt },
+  );
+
+  assert.deepEqual(analysis.decisionPath.nextBestActions, analysis.requiredActions.map((action) => action.code));
+  assert.deepEqual(analysis.decisionPath.nextBestActions, ["VERIFY_CI_EVIDENCE", "VERIFY_TEST_EVIDENCE", "REVIEW_CHANGE_SURFACE", "REVIEW_CRITICAL_COMPONENT", "VERIFY_SECURITY_EVIDENCE"]);
+  assert.doesNotMatch(analysis.decisionPath.note, /will become GO/i);
+  assert.match(analysis.decisionPath.note, /does not guarantee GO/i);
+});
+
+test("SECURITY_NOT_AVAILABLE uses unavailable-evidence wording", () => {
+  const analysis = evaluateReleaseEvidence(
+    "unit-security-unavailable",
+    { ...cleanEvidence, security: { ...cleanEvidence.security, status: "NOT_AVAILABLE" } },
+    { evaluatedAt },
+  );
+
+  assert.ok(analysis.conditions.some((condition) => condition.includes("security evidence is unavailable")));
+  assert.ok(!analysis.conditions.some((condition) => condition.includes("non-blocking security findings")));
+});
+
+test("real non-blocking security findings still use findings wording", () => {
+  const analysis = evaluateReleaseEvidence(
+    "unit-security-findings",
+    { ...cleanEvidence, security: { ...cleanEvidence.security, status: "WARNING", medium: 1 } },
+    { evaluatedAt },
+  );
+
+  assert.ok(analysis.conditions.some((condition) => condition.includes("non-blocking security findings")));
+  assert.ok(analysis.requiredActions.some((action) => action.code === "REVIEW_SECURITY_FINDINGS"));
+});

@@ -63,6 +63,15 @@ export function findMaterialWarnings(
     });
   }
 
+  if (evidence.ci.status === "PENDING") {
+    warnings.push({
+      category: "CI",
+      severity: "WARNING",
+      code: "CI_PENDING",
+      message: "CI checks are still pending for the candidate HEAD SHA.",
+    });
+  }
+
   if (evidence.tests.status === "NOT_AVAILABLE") {
     warnings.push({
       category: "TESTS",
@@ -157,6 +166,7 @@ const requiredActionOrder = [
   "FIX_CRITICAL_SECURITY",
   "FIX_SECURITY",
   "VERIFY_CI_EVIDENCE",
+  "WAIT_FOR_CI_COMPLETION",
   "INVESTIGATE_FLAKY_TESTS",
   "VERIFY_TEST_EVIDENCE",
   "REVIEW_CHANGE_SURFACE",
@@ -198,6 +208,12 @@ const warningActionMap: Record<string, RequiredAction> = {
     priority: "REQUIRED",
     category: "CI",
     message: "Verify CI evidence outside Release Gate before release promotion.",
+  },
+  CI_PENDING: {
+    code: "WAIT_FOR_CI_COMPLETION",
+    priority: "REQUIRED",
+    category: "CI",
+    message: "Wait for pending CI checks on the candidate HEAD SHA to complete before release promotion.",
   },
   FLAKY_TESTS_PRESENT: {
     code: "INVESTIGATE_FLAKY_TESTS",
@@ -289,6 +305,10 @@ export function createConditions(
     conditions.push("Acknowledge that CI evidence was unavailable from the public repository provider.");
   }
 
+  if (warningCodes.has("CI_PENDING")) {
+    conditions.push("Wait for pending CI checks on the candidate HEAD SHA to complete before release promotion.");
+  }
+
   if (warningCodes.has("FLAKY_TESTS_PRESENT") || warningCodes.has("TESTS_WARNING") || warningCodes.has("TESTS_NOT_AVAILABLE")) {
     conditions.push("Acknowledge flaky-test risk or unavailable automated-test evidence before release promotion.");
   }
@@ -304,10 +324,11 @@ export function createConditions(
     conditions.push("Acknowledge elevated change surface and release rollback readiness.");
   }
 
-  if (
+  if (warningCodes.has("SECURITY_NOT_AVAILABLE")) {
+    conditions.push("Acknowledge that security evidence is unavailable and verify security status before release promotion.");
+  } else if (
     warningCodes.has("SECURITY_WARNING") ||
-    warningCodes.has("SECURITY_MEDIUM_FINDINGS") ||
-    warningCodes.has("SECURITY_NOT_AVAILABLE")
+    warningCodes.has("SECURITY_MEDIUM_FINDINGS")
   ) {
     conditions.push("Review non-blocking security findings and accept residual security risk.");
   }

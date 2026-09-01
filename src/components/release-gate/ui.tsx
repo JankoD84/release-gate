@@ -89,7 +89,7 @@ export function riskTone(value: "LOW" | "MEDIUM" | "HIGH"): BadgeTone {
   return "high";
 }
 
-export function evidenceTone(value: "PASS" | "WARNING" | "FAIL" | "NOT_AVAILABLE"): BadgeTone {
+export function evidenceTone(value: "PASS" | "WARNING" | "FAIL" | "PENDING" | "NOT_AVAILABLE"): BadgeTone {
   if (value === "PASS") return "pass";
   if (value === "FAIL") return "fail";
   return "warning";

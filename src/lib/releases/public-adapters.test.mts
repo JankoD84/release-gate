@@ -98,11 +98,20 @@ test("GitHub adapter discovers open pull requests as primary candidates", async 
   assert.equal(result.snapshot.releases[0].candidate?.headSha, "bbbb");
   assert.equal(result.snapshot.releases[0].candidate?.publicUrl, "https://github.com/example/project/pull/42");
   assert.equal(result.snapshot.releases[0].evidence.ci.status, "PASS");
+  assert.equal(result.snapshot.releases[0].evidence.ci.summary?.passed, 1);
+  assert.equal(result.snapshot.releases[0].evidence.ci.summary?.failed, 0);
+  assert.equal(result.snapshot.releases[0].evidence.ci.summary?.pending, 0);
+  assert.equal(result.snapshot.releases[0].evidence.ci.checks?.[0]?.headSha, "bbbb");
+  assert.equal(result.snapshot.releases[0].evidence.ci.checks?.[0]?.name, "PR CI");
+  assert.equal(result.snapshot.releases[0].evidence.ci.checks?.[0]?.conclusion, "success");
   assert.equal(result.snapshot.releases[1].evidence.ci.status, "FAIL");
+  assert.equal(result.snapshot.releases[1].evidence.ci.summary?.failed, 1);
   assert.equal(result.snapshot.releases[0].evidence.changeRisk.filesChanged, 2);
   assert.equal(result.snapshot.releases[0].evidence.changeRisk.linesAdded, 12);
   assert.equal(result.snapshot.releases[0].evidence.changeRisk.linesDeleted, 3);
   assert.deepEqual(result.snapshot.releases[0].evidence.changeRisk.changedComponents, ["release-orchestration", "web"]);
+  assert.deepEqual(result.snapshot.releases[0].evidence.changeRisk.riskReasons, ["CRITICAL_COMPONENT_CHANGED"]);
+  assert.deepEqual(result.snapshot.releases[0].evidence.changeRisk.criticalComponents, ["release-orchestration"]);
   assert.equal(result.snapshot.releases[0].provenance?.label, "GitHub Pull Request");
   assert.equal(result.snapshot.releases[0].evidence.ci.provenance?.label, "PR CI");
   assert.equal(result.snapshot.releases[0].evidence.changeRisk.provenance?.label, "GitHub Pull Request changes");
@@ -122,6 +131,47 @@ test("GitHub pull request CI remains NOT_AVAILABLE when public checks are unavai
   const result = await adapter.getSnapshot(reference);
   assert.equal(result.ok, true);
   assert.equal(result.snapshot.releases[0].evidence.ci.status, "NOT_AVAILABLE");
+  assert.equal(result.snapshot.releases[0].evidence.ci.checks, undefined);
+});
+
+test("GitHub pull request CI ignores mismatched HEAD SHA checks", async () => {
+  const reference = ref("https://github.com/example/project");
+  const adapter = new GitHubPublicRepositoryAdapter(fetchMap({
+    "https://api.github.com/repos/example/project": response({ default_branch: "main" }),
+    "https://api.github.com/repos/example/project/pulls?state=open&per_page=20": response([{ number: 46, title: "Mismatched CI", base: { ref: "main" }, head: { ref: "feature/mismatch", sha: "ffff" }, html_url: "https://github.com/example/project/pull/46" }]),
+    "https://api.github.com/repos/example/project/pulls/46": response({ number: 46, title: "Mismatched CI", base: { ref: "main" }, head: { ref: "feature/mismatch", sha: "ffff" }, changed_files: 1, additions: 1, deletions: 0, html_url: "https://github.com/example/project/pull/46" }),
+    "https://api.github.com/repos/example/project/pulls/46/files?per_page=100": response([{ filename: "src/app/page.tsx", additions: 1, deletions: 0 }]),
+    "https://api.github.com/repos/example/project/actions/runs?head_sha=ffff&per_page=20": response({ workflow_runs: [{ head_sha: "eeee", conclusion: "success", name: "Wrong SHA CI", html_url: "https://github.com/example/project/actions/runs/46" }] }),
+  }));
+
+  const result = await adapter.getSnapshot(reference);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.snapshot.releases[0].evidence.ci.status, "NOT_AVAILABLE");
+});
+
+test("GitHub pull request CI reports pending checks for candidate HEAD SHA", async () => {
+  const reference = ref("https://github.com/example/project");
+  const calls: string[] = [];
+  const fetcher = async (input: string): Promise<Response> => {
+    calls.push(input);
+    return fetchMap({
+      "https://api.github.com/repos/example/project": response({ default_branch: "main" }),
+      "https://api.github.com/repos/example/project/pulls?state=open&per_page=20": response([{ number: 45, title: "Pending CI", base: { ref: "main" }, head: { ref: "feature/pending", sha: "eeee" }, html_url: "https://github.com/example/project/pull/45" }]),
+      "https://api.github.com/repos/example/project/pulls/45": response({ number: 45, title: "Pending CI", base: { ref: "main" }, head: { ref: "feature/pending", sha: "eeee" }, changed_files: 1, additions: 1, deletions: 0, html_url: "https://github.com/example/project/pull/45" }),
+      "https://api.github.com/repos/example/project/pulls/45/files?per_page=100": response([{ filename: "src/app/page.tsx", additions: 1, deletions: 0 }]),
+      "https://api.github.com/repos/example/project/actions/runs?head_sha=eeee&per_page=20": response({ workflow_runs: [{ status: "in_progress", conclusion: null, name: "PR CI", html_url: "https://github.com/example/project/actions/runs/45", created_at: "2026-03-03T00:00:00.000Z", updated_at: "2026-03-03T00:05:00.000Z" }] }),
+    })(input);
+  };
+
+  const result = await new GitHubPublicRepositoryAdapter(fetcher).getSnapshot(reference);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.snapshot.releases[0].evidence.ci.status, "PENDING");
+  assert.equal(result.snapshot.releases[0].evidence.ci.summary?.pending, 1);
+  assert.equal(result.snapshot.releases[0].evidence.ci.checks?.[0]?.headSha, "eeee");
+  assert.ok(calls.includes("https://api.github.com/repos/example/project/actions/runs?head_sha=eeee&per_page=20"));
+  assert.ok(!calls.some((call) => call.includes("branch=feature/pending")));
 });
 
 test("GitHub adapter falls back to tags when releases are empty", async () => {
@@ -329,7 +379,10 @@ test("GitLab adapter discovers open merge requests as primary candidates", async
   assert.equal(result.snapshot.releases[0].candidate?.headSha, "bbbb");
   assert.equal(result.snapshot.releases[0].candidate?.publicUrl, "https://gitlab.com/example/subgroup/project/-/merge_requests/17");
   assert.equal(result.snapshot.releases[0].evidence.ci.status, "PASS");
+  assert.equal(result.snapshot.releases[0].evidence.ci.summary?.passed, 1);
+  assert.equal(result.snapshot.releases[0].evidence.ci.checks?.[0]?.headSha, "bbbb");
   assert.equal(result.snapshot.releases[1].evidence.ci.status, "FAIL");
+  assert.equal(result.snapshot.releases[1].evidence.ci.summary?.failed, 1);
   assert.equal(result.snapshot.releases[0].evidence.changeRisk.filesChanged, 1);
   assert.equal(result.snapshot.releases[0].evidence.changeRisk.linesAdded, 1);
   assert.equal(result.snapshot.releases[0].evidence.changeRisk.linesDeleted, 1);

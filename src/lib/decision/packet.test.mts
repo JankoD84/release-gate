@@ -163,6 +163,22 @@ test("packet includes pull request candidate metadata without changing recommend
   assert.match(markdown, /Target Branch: main/);
 });
 
+test("Decision Packet includes new intelligence fields", () => {
+  const packet = packetFor("release-250");
+  const markdown = createReleaseDecisionPacketMarkdown(packet);
+
+  assert.equal(packet.evidenceCompleteness.totalSurfaces, 4);
+  assert.equal(typeof packet.evidenceCompleteness.percentage, "number");
+  assert.ok(Array.isArray(packet.evidenceCompleteness.missingSurfaces));
+  assert.equal(packet.evidenceFreshness.CI.state, "UNKNOWN");
+  assert.ok(Array.isArray(packet.riskFingerprint.riskReasons));
+  assert.equal(packet.decisionPath.currentDecision, "CONDITIONAL_GO");
+  assert.deepEqual(packet.decisionPath.nextBestActions, packet.requiredActions.map((action) => action.code));
+  assert.match(markdown, /Evidence Intelligence/);
+  assert.match(markdown, /Decision Path/);
+  assert.match(markdown, /does not guarantee GO/);
+});
+
 test("JSON packet contains no environment or secret-shaped internals", () => {
   const json = JSON.stringify(packetFor("release-250"));
 

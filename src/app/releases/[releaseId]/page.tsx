@@ -99,6 +99,43 @@ function RequiredActionsList({ actions, decision }: { actions: readonly Required
   );
 }
 
+function titleCaseCode(value: string): string {
+  return value.toLowerCase().replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function IntelligenceStrip({ analysis }: { analysis: DecisionAnalysis }) {
+  return (
+    <Panel className="p-5">
+      <div className="grid gap-4 md:grid-cols-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Evidence Coverage</p>
+          <p className="mt-2 text-lg font-semibold text-white">
+            {analysis.evidenceCompleteness.percentage}% · {analysis.evidenceCompleteness.verifiedSurfaces} / {analysis.evidenceCompleteness.totalSurfaces} verified
+          </p>
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Missing</p>
+          <p className="mt-2 wrap-break-word text-sm font-semibold text-slate-200">
+            {analysis.evidenceCompleteness.missingSurfaces.length > 0 ? analysis.evidenceCompleteness.missingSurfaces.join(" · ") : "None"}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Risk Drivers</p>
+          <p className="mt-2 wrap-break-word text-sm font-semibold text-slate-200">
+            {analysis.riskFingerprint.riskReasons.length > 0 ? analysis.riskFingerprint.riskReasons.map(titleCaseCode).join(" · ") : "None"}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Path Forward</p>
+          <ol className="mt-2 list-inside list-decimal space-y-1 text-sm font-semibold text-slate-200">
+            {analysis.decisionPath.nextBestActions.length > 0 ? analysis.decisionPath.nextBestActions.map((action) => <li key={action}>{titleCaseCode(action)}</li>) : <li>Maintain current evidence</li>}
+          </ol>
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
 function EvidenceSource({ provenance }: { provenance?: EvidenceProvenance }) {
   if (!provenance) {
     return null;
@@ -467,6 +504,8 @@ export default function ReleaseDetailPage() {
         </Panel>
 
         <DecisionGate analysis={analysis} decisionState={decisionState} release={release} />
+
+        <IntelligenceStrip analysis={analysis} />
 
         <Panel className="overflow-hidden">
           <SectionHeader title="Decision Analysis" subtitle="No raw JSON. Only release-relevant blockers, warnings, and conditions are shown." />

@@ -15,6 +15,7 @@ import {
 import { createEvidenceProvenance } from "./provenance.ts";
 import type {
   ChangeRiskEvidence,
+  CiCheck,
   CiEvidence,
   EvidenceProvenance,
   PublicRepositoryError,
@@ -328,30 +329,89 @@ function normalizeCandidateChangeRisk(provider: RepositoryProvider, candidate: N
   };
 }
 
-function ciFromRows(provider: RepositoryProvider, reference: RepositoryReference, rows: readonly Record<string, unknown>[], label: string, sourceType: "workflow" | "pipeline", urlKey: "html_url" | "web_url"): CiEvidence {
+function ciConclusion(row: Record<string, unknown>): string {
+  const conclusion = typeof row.conclusion === "string" && row.conclusion ? row.conclusion : undefined;
+  const status = typeof row.status === "string" && row.status ? row.status : undefined;
+
+  return conclusion ?? status ?? "unknown";
+}
+
+function ciCheckState(row: Record<string, unknown>): "passed" | "failed" | "pending" {
+  const conclusion = ciConclusion(row);
+
+  if (["success", "skipped"].includes(conclusion)) return "passed";
+  if (["failure", "failed", "cancelled", "canceled", "timed_out"].includes(conclusion)) return "failed";
+  return "pending";
+}
+
+function rowMatchesHeadSha(row: Record<string, unknown>, headSha: string): boolean {
+  const rowSha = typeof row.head_sha === "string" ? row.head_sha : typeof row.sha === "string" ? row.sha : undefined;
+
+  return rowSha === undefined || rowSha === headSha;
+}
+
+function rowTimestamp(row: Record<string, unknown>, ...keys: readonly string[]): string | undefined {
+  for (const key of keys) {
+    if (typeof row[key] === "string") return row[key];
+  }
+
+  return undefined;
+}
+
+function ciFromRows(provider: RepositoryProvider, reference: RepositoryReference, rows: readonly Record<string, unknown>[], label: string, sourceType: "workflow" | "pipeline", urlKey: "html_url" | "web_url", headSha: string): CiEvidence {
   if (rows.length === 0) return notAvailableCi(provider);
 
-  const failed = rows.filter((row) => row.conclusion === "failure" || row.conclusion === "cancelled" || row.conclusion === "timed_out" || row.status === "failed" || row.status === "canceled").length;
-  const passed = rows.filter((row) => row.conclusion === "success" || row.conclusion === "skipped" || row.status === "success" || row.status === "skipped").length;
+  const checks: CiCheck[] = rows.map((row) => {
+    const name = typeof row.name === "string" && row.name ? row.name : typeof row.path === "string" && row.path ? row.path : label;
+    const observedAt = rowTimestamp(row, "updated_at", "completed_at", "created_at", "started_at");
 
-  if (failed === 0 && passed === 0) return notAvailableCi(provider);
+    return {
+      name,
+      status: typeof row.status === "string" ? row.status : "unknown",
+      conclusion: ciConclusion(row),
+      headSha,
+      ...(rowTimestamp(row, "created_at", "started_at") ? { startedAt: rowTimestamp(row, "created_at", "started_at") } : {}),
+      ...(rowTimestamp(row, "completed_at", "updated_at") ? { completedAt: rowTimestamp(row, "completed_at", "updated_at") } : {}),
+      ...(observedAt ? { observedAt } : {}),
+      provenance: createEvidenceProvenance({
+        provider,
+        repository: reference.fullPath,
+        sourceType,
+        label: name,
+        externalUrl: row[urlKey],
+        observedAt,
+      }),
+    };
+  });
 
+  const failed = checks.filter((_, index) => ciCheckState(rows[index]) === "failed").length;
+  const passed = checks.filter((_, index) => ciCheckState(rows[index]) === "passed").length;
+  const pending = checks.length - failed - passed;
   const primary = rows.find((row) => typeof row[urlKey] === "string") ?? rows[0];
+  const primaryObservedAt = rowTimestamp(primary, "updated_at", "completed_at", "created_at", "started_at");
 
   return {
-    status: failed > 0 ? "FAIL" : passed === rows.length ? "PASS" : "NOT_AVAILABLE",
+    status: failed > 0 ? "FAIL" : pending > 0 ? "PENDING" : "PASS",
     workflow: label,
-    totalJobs: rows.length,
+    totalJobs: checks.length,
     passedJobs: passed,
     failedJobs: failed,
+    pendingJobs: pending,
     durationSeconds: 0,
+    checks,
+    summary: {
+      total: checks.length,
+      passed,
+      failed,
+      pending,
+    },
     provenance: createEvidenceProvenance({
       provider,
       repository: reference.fullPath,
       sourceType,
       label: typeof primary.name === "string" ? primary.name : label,
       externalUrl: primary[urlKey],
-      observedAt: primary.updated_at ?? primary.created_at,
+      observedAt: primaryObservedAt,
     }),
   };
 }
@@ -620,7 +680,7 @@ export class GitHubPublicRepositoryAdapter {
     const runs = await fetchGithubJson(this.fetcher, `https://api.github.com/repos/${reference.fullPath}/actions/runs?head_sha=${encodeURIComponent(commitSha)}&per_page=20`, true);
     if (!runs.ok || !isRecord(runs.data) || !Array.isArray(runs.data.workflow_runs)) return notAvailableCi(this.provider);
 
-    return ciFromRows(this.provider, reference, runs.data.workflow_runs.filter(isRecord), "GitHub Actions workflow runs", "workflow", "html_url");
+    return ciFromRows(this.provider, reference, runs.data.workflow_runs.filter(isRecord).filter((row) => rowMatchesHeadSha(row, commitSha)), "GitHub Actions workflow runs", "workflow", "html_url", commitSha);
   }
 
   private async getChangeRisk(reference: RepositoryReference, current: string, previous?: string): Promise<ChangeRiskEvidence> {
@@ -845,14 +905,14 @@ export class GitLabPublicRepositoryAdapter {
     if (mergeRequestNumber !== undefined) {
       const mrPipelines = await fetchJson(this.fetcher, `https://gitlab.com/api/v4/projects/${encodeURIComponent(reference.fullPath)}/merge_requests/${mergeRequestNumber}/pipelines?per_page=20`, { headers: gitlabHeaders, next: { revalidate: 45 } }, this.provider, true);
       if (mrPipelines.ok && Array.isArray(mrPipelines.data) && mrPipelines.data.length > 0) {
-        return ciFromRows(this.provider, reference, mrPipelines.data.filter(isRecord), "GitLab Merge Request pipelines", "pipeline", "web_url");
+        return ciFromRows(this.provider, reference, mrPipelines.data.filter(isRecord).filter((row) => rowMatchesHeadSha(row, ref)), "GitLab Merge Request pipelines", "pipeline", "web_url", ref);
       }
     }
 
     const pipelines = await fetchJson(this.fetcher, `https://gitlab.com/api/v4/projects/${encodeURIComponent(reference.fullPath)}/pipelines?sha=${encodeURIComponent(ref)}&per_page=20`, { headers: gitlabHeaders, next: { revalidate: 45 } }, this.provider, true);
     if (!pipelines.ok || !Array.isArray(pipelines.data)) return notAvailableCi(this.provider);
 
-    return ciFromRows(this.provider, reference, pipelines.data.filter(isRecord), "GitLab pipelines", "pipeline", "web_url");
+    return ciFromRows(this.provider, reference, pipelines.data.filter(isRecord).filter((row) => rowMatchesHeadSha(row, ref)), "GitLab pipelines", "pipeline", "web_url", ref);
   }
 
   private async getChangeRisk(reference: RepositoryReference, current: string, previous?: string): Promise<ChangeRiskEvidence> {

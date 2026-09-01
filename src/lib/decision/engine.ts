@@ -5,6 +5,7 @@ import {
   getTestEvidenceByReleaseId,
 } from "../releases/fixtures.ts";
 import type { ReleaseEvidence, ReleaseRecord } from "../releases/types.ts";
+import { createDecisionPath, createEvidenceCompleteness, createEvidenceFreshness, createRiskFingerprint } from "./intelligence.ts";
 import { createConditions, createRequiredActions, findHardBlockers, findMaterialWarnings } from "./rules.ts";
 import type {
   DecisionAnalysis,
@@ -40,6 +41,14 @@ export function evaluateReleaseEvidence(
         ? "CONDITIONAL_GO"
         : "GO";
   const visibleWarnings = decision === "NO_GO" ? [] : warnings;
+  const evaluatedAt = options.evaluatedAt ?? new Date().toISOString();
+  const requiredActions = createRequiredActions(blockingEvidence, visibleWarnings);
+  const analysisCore = {
+    decision,
+    blockingEvidence,
+    warnings: visibleWarnings,
+    requiredActions,
+  };
 
   return {
     releaseId,
@@ -48,9 +57,13 @@ export function evaluateReleaseEvidence(
     blockingEvidence,
     warnings: visibleWarnings,
     conditions: decision === "CONDITIONAL_GO" ? createConditions(warnings) : [],
-    requiredActions: createRequiredActions(blockingEvidence, visibleWarnings),
+    requiredActions,
+    evidenceCompleteness: createEvidenceCompleteness(evidence),
+    evidenceFreshness: createEvidenceFreshness(evidence, evaluatedAt),
+    riskFingerprint: createRiskFingerprint(evidence.changeRisk),
+    decisionPath: createDecisionPath(analysisCore),
     summary: createSummary(decision),
-    evaluatedAt: options.evaluatedAt ?? new Date().toISOString(),
+    evaluatedAt,
   };
 }
 

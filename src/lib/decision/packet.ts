@@ -35,6 +35,10 @@ generatedAt: string;
     summary: string;
     evaluatedAt: string;
   };
+  evidenceCompleteness: DecisionAnalysis["evidenceCompleteness"];
+  evidenceFreshness: DecisionAnalysis["evidenceFreshness"];
+  riskFingerprint: DecisionAnalysis["riskFingerprint"];
+  decisionPath: DecisionAnalysis["decisionPath"];
   evidence: {
     ci: PacketEvidence<CiEvidence["status"]>;
     tests: PacketEvidence<TestEvidence["status"]>;
@@ -104,6 +108,10 @@ export function createReleaseDecisionPacket(input: {
       summary: analysis.summary,
       evaluatedAt: analysis.evaluatedAt,
     },
+    evidenceCompleteness: analysis.evidenceCompleteness,
+    evidenceFreshness: analysis.evidenceFreshness,
+    riskFingerprint: analysis.riskFingerprint,
+    decisionPath: analysis.decisionPath,
     evidence: {
       ci: {
         status: release.evidence.ci.status,
@@ -166,6 +174,10 @@ function provenanceMarkdown(provenance?: EvidenceProvenance): string {
   return provenance.externalUrl ? `${source}\nLink: ${provenance.externalUrl}` : source;
 }
 
+function listMarkdown(items: readonly string[]): string {
+  return items.length === 0 ? "None" : items.map((item) => `- ${item}`).join("\n");
+}
+
 function actionsMarkdown(actions: readonly RequiredAction[]): string {
   if (actions.length === 0) {
     return "None — current evidence does not require remediation.";
@@ -201,6 +213,28 @@ export function createReleaseDecisionPacketMarkdown(packet: ReleaseDecisionPacke
     "",
     `Confidence: ${packet.systemRecommendation.confidence}`,
     packet.systemRecommendation.summary,
+    "",
+    "## Evidence Intelligence",
+    "",
+    `Completeness: ${packet.evidenceCompleteness.percentage}% · ${packet.evidenceCompleteness.verifiedSurfaces} / ${packet.evidenceCompleteness.totalSurfaces} verified`,
+    `Missing Surfaces: ${packet.evidenceCompleteness.missingSurfaces.join(", ") || "None"}`,
+    "",
+    "### Freshness",
+    listMarkdown(Object.entries(packet.evidenceFreshness).map(([surface, freshness]) => `${surface}: ${freshness.state}${freshness.observedAt ? ` (observed ${freshness.observedAt})` : ""}`)),
+    "",
+    "### Risk Fingerprint",
+    `Risk Reasons: ${packet.riskFingerprint.riskReasons.join(", ") || "None"}`,
+    `Changed Areas: ${packet.riskFingerprint.changedAreas.join(", ") || "None"}`,
+    `Critical Components: ${packet.riskFingerprint.criticalComponents.join(", ") || "None"}`,
+    "",
+    "### Decision Path",
+    `Current Decision: ${formatDecision(packet.decisionPath.currentDecision)}`,
+    `Target Decision: ${formatDecision(packet.decisionPath.targetDecision)}`,
+    "Currently Prevented By:",
+    listMarkdown(packet.decisionPath.currentlyPreventedBy),
+    "Next Best Actions:",
+    listMarkdown(packet.decisionPath.nextBestActions),
+    packet.decisionPath.note,
     "",
     "## Evidence",
     "",
