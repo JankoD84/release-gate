@@ -2,7 +2,7 @@ import type { DecisionAnalysis, ReleaseDecision, RequiredAction } from "./types.
 import type { ActivityRecord } from "../decisions/activity-types.ts";
 import type { FinalDecisionState } from "../decisions/final-decision-types.ts";
 import type { RepositoryReference } from "../releases/repository.ts";
-import type { ChangeRiskEvidence, CiEvidence, EvidenceProvenance, ReleaseRecord, SecurityEvidence, TestEvidence } from "../releases/types.ts";
+import type { ChangeRiskEvidence, CiEvidence, EvidenceProvenance, ReleaseCandidateMetadata, ReleaseRecord, SecurityEvidence, TestEvidence } from "../releases/types.ts";
 
 type PacketEvidence<TStatus extends string> = {
   status: TStatus;
@@ -27,7 +27,8 @@ export type ReleaseDecisionPacket = {
     updatedAt: string;
     provenance?: EvidenceProvenance;
   };
-  generatedAt: string;
+candidate?: ReleaseCandidateMetadata;
+generatedAt: string;
   systemRecommendation: {
     decision: ReleaseDecision;
     confidence: DecisionAnalysis["confidence"];
@@ -95,6 +96,7 @@ export function createReleaseDecisionPacket(input: {
       updatedAt: release.updatedAt,
       ...(release.provenance ? { provenance: release.provenance } : {}),
     },
+    ...(release.candidate ? { candidate: release.candidate } : {}),
     generatedAt: input.generatedAt ?? new Date().toISOString(),
     systemRecommendation: {
       decision: analysis.decision,
@@ -183,7 +185,12 @@ export function createReleaseDecisionPacketMarkdown(packet: ReleaseDecisionPacke
     "",
     `Repository: ${packet.repository.provider === "synthetic" ? "Synthetic fixtures" : packet.repository.provider === "github" ? "GitHub" : "GitLab"} / ${packet.repository.fullPath}`,
     packet.repository.publicUrl ? `Repository URL: ${packet.repository.publicUrl}` : undefined,
-    `Release: ${packet.release.version}`,
+    packet.candidate ? `Candidate Type: ${packet.candidate.candidateType}` : undefined,
+    packet.candidate?.candidateNumber !== undefined ? `Candidate Number: ${packet.candidate.candidateNumber}` : undefined,
+    packet.candidate ? `Candidate Title: ${packet.candidate.title}` : `Release: ${packet.release.version}`,
+    packet.candidate?.headBranch ? `Source Branch: ${packet.candidate.headBranch}` : undefined,
+    packet.candidate?.baseBranch ? `Target Branch: ${packet.candidate.baseBranch}` : `Branch: ${packet.release.branch}`,
+    packet.candidate?.publicUrl ? `Candidate URL: ${packet.candidate.publicUrl}` : undefined,
     `Release ID: ${packet.release.id}`,
     `Commit: ${packet.release.commitSha}`,
     `Generated At: ${packet.generatedAt}`,

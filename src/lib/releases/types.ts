@@ -4,6 +4,8 @@ export type EvidenceAvailability = "AVAILABLE" | "NOT_AVAILABLE";
 
 export type EvidenceSourceType =
   | "repository"
+  | "pull-request"
+  | "merge-request"
   | "release"
   | "tag"
   | "commit"
@@ -29,6 +31,22 @@ export type SecurityStatus = "PASS" | "WARNING" | "FAIL" | "NOT_AVAILABLE";
 
 export type ChangeRiskLevel = "LOW" | "MEDIUM" | "HIGH";
 
+export type ReleaseCandidateType = "PULL_REQUEST" | "MERGE_REQUEST" | "RELEASE" | "TAG";
+
+export type ReleaseCandidateState = "OPEN" | "CLOSED" | "MERGED" | "RELEASED";
+
+export type ReleaseCandidateMetadata = {
+  candidateType: ReleaseCandidateType;
+  candidateNumber?: number;
+  title: string;
+  baseBranch?: string;
+  headBranch?: string;
+  headSha: string;
+  state: ReleaseCandidateState;
+  publicUrl?: string;
+  repository?: import("./repository.ts").RepositoryReference;
+};
+
 export type Release = {
   id: string;
   version: string;
@@ -38,6 +56,7 @@ export type Release = {
   branch: string;
   commitSha: string;
   provenance?: EvidenceProvenance;
+  candidate?: ReleaseCandidateMetadata;
 };
 
 export type CiEvidence = {
@@ -106,6 +125,8 @@ export type PublicRepositoryError = {
     | "EVIDENCE_NOT_AVAILABLE";
   message: string;
   status?: number;
+  retryAfterSeconds?: number;
+  rateLimitResetAt?: string;
 };
 
 export type ReleaseLookupResult<T> =

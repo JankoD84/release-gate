@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { beforeEach, test } from "node:test";
+import { afterEach, beforeEach, test } from "node:test";
 
 import { getActivityLog, resetActivityLogForTests, setActivityStorageForTests } from "../decisions/activity-store.ts";
 import { getFinalDecision, resetFinalDecisionStoreForTests, setFinalDecisionStorageForTests } from "../decisions/final-decision-store.ts";
@@ -85,6 +85,10 @@ async function executeTool(name: string, input: Record<string, unknown> = {}): P
   return result as Record<string, unknown>;
 }
 
+afterEach(() => {
+  delete process.env.GITHUB_TOKEN;
+});
+
 beforeEach(() => {
   const storage = new MemoryStorage();
   setFinalDecisionStorageForTests(storage);
@@ -155,9 +159,31 @@ test("stale live release IDs are rejected without fallback", async () => {
   assert.equal((result.error as Record<string, unknown>).code, "RELEASE_NOT_FOUND");
 });
 
+test("unknown canonical live candidate ID still returns RELEASE_NOT_FOUND", async () => {
+  mockLiveFetch({ ...createLiveDocument(), release: { ...createLiveDocument().release, id: "github:JankoD84/release-gate:pr:1" } });
+  const result = await getReleaseProvider("LIVE").getReleaseRecord("github:JankoD84/release-gate:pr:999");
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "RELEASE_NOT_FOUND");
+  assert.equal(result.error.releaseId, "github:JankoD84/release-gate:pr:999");
+});
+
 test("unavailable live evidence does not silently fall back to demo", async () => {
   setLiveEvidenceFetchForTests(async () => Response.json({ code: "PROVIDER_UNAVAILABLE", message: "missing" }, { status: 503 }));
   const result = await executeTool("list_releases");
 
   assert.equal((result.error as Record<string, unknown>).code, "PROVIDER_UNAVAILABLE");
+});
+
+test("WebMCP results and errors do not expose server GitHub token", async () => {
+  const secret = "test-token-never-print";
+  process.env.GITHUB_TOKEN = secret;
+
+  const success = await executeTool("list_releases");
+  assert.doesNotMatch(JSON.stringify(success), new RegExp(secret));
+
+  setLiveEvidenceFetchForTests(async () => Response.json({ code: "PROVIDER_RATE_LIMITED", message: "Public github API rate limit exceeded. Try again after 2030-01-01T00:00:00.000Z.", rateLimitResetAt: "2030-01-01T00:00:00.000Z" }, { status: 429 }));
+  const failure = await executeTool("analyze_release", { releaseId: liveReleaseId });
+  assert.equal((failure.error as Record<string, unknown>).code, "PROVIDER_RATE_LIMITED");
+  assert.doesNotMatch(JSON.stringify(failure), new RegExp(secret));
 });

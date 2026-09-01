@@ -113,6 +113,56 @@ test("markdown packet contains repository, recommendation, actions, and human fi
   assert.match(markdown, /PENDING/);
 });
 
+test("packet includes pull request candidate metadata without changing recommendation truth", () => {
+  const release = getReleaseRecordById("release-240");
+  const analysis = analyzeRelease("release-240", { evaluatedAt: generatedAt });
+  const repository = parsePublicRepositoryUrl("https://github.com/example/project");
+
+  assert.equal(release.ok, true);
+  assert.equal(analysis.ok, true);
+  assert.equal(repository.ok, true);
+
+  const packet = createReleaseDecisionPacket({
+    mode: "LIVE",
+    repository: repository.reference,
+    release: {
+      ...release.data,
+      id: "github:example/project:pr:42",
+      version: "PR #42",
+      name: "Payment refactor",
+      branch: "main",
+      commitSha: "bbbb",
+      candidate: {
+        candidateType: "PULL_REQUEST",
+        candidateNumber: 42,
+        title: "Payment refactor",
+        baseBranch: "main",
+        headBranch: "feature/payments",
+        headSha: "bbbb",
+        state: "OPEN",
+        publicUrl: "https://github.com/example/project/pull/42",
+        repository: repository.reference,
+      },
+    },
+    analysis: analysis.data,
+    humanDecision: { releaseId: "github:example/project:pr:42", status: "PENDING" },
+    generatedAt,
+  });
+  const markdown = createReleaseDecisionPacketMarkdown(packet);
+
+  assert.equal(packet.candidate?.candidateType, "PULL_REQUEST");
+  assert.equal(packet.candidate?.candidateNumber, 42);
+  assert.equal(packet.candidate?.headBranch, "feature/payments");
+  assert.equal(packet.candidate?.baseBranch, "main");
+  assert.equal(packet.candidate?.headSha, "bbbb");
+  assert.equal(packet.candidate?.publicUrl, "https://github.com/example/project/pull/42");
+  assert.equal(packet.systemRecommendation.decision, "GO");
+  assert.match(markdown, /Candidate Type: PULL_REQUEST/);
+  assert.match(markdown, /Candidate Number: 42/);
+  assert.match(markdown, /Source Branch: feature\/payments/);
+  assert.match(markdown, /Target Branch: main/);
+});
+
 test("JSON packet contains no environment or secret-shaped internals", () => {
   const json = JSON.stringify(packetFor("release-250"));
 

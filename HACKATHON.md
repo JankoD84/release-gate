@@ -8,7 +8,7 @@ Release Gate — Agent-native software release decisions
 
 Release Gate demonstrates how browser agents can participate in production-like software release governance through structured WebMCP capabilities without silently taking final release authority away from humans.
 
-The application turns release evidence into deterministic system recommendations, explains where evidence came from, derives Required Actions, and preserves explicit human control over final approval or rejection.
+The application turns public release-candidate evidence into deterministic system recommendations, explains where evidence came from, derives Required Actions, and preserves explicit human control over final approval or rejection. LIVE mode primarily answers: “Can this change safely merge?”
 
 ## Hackathon story: Release Gate dogfoods itself
 
@@ -17,7 +17,7 @@ Release Gate now has a LIVE mode that evaluates read-only public repository evid
 - `github.com`
 - `gitlab.com`
 
-The dashboard starts with the existing dogfood source, `https://github.com/JankoD84/release-gate`. For that repository, a GitHub Actions workflow collects current tests, lint/build gate outcomes, npm dependency audit counts, and Git change surface, then publishes a public evidence JSON asset on the `live-evidence` GitHub Release. For other public GitHub/GitLab repositories, provider adapters normalize public Releases/tags, CI/pipeline evidence when anonymously available, and compare/change data when available.
+The dashboard starts with the existing dogfood source, `https://github.com/JankoD84/release-gate`. LIVE provider adapters now prefer open GitHub Pull Requests and GitLab Merge Requests as pre-merge release candidates. They normalize candidate number/title, source and target branches, head SHA, public URL, changed files/additions/deletions, and CI/pipeline evidence when anonymously available. When no open PR/MR exists, Release Gate falls back to public Releases/tags. For the default dogfood repository, the existing GitHub Actions evidence asset remains available as deterministic live release/tag evidence.
 
 DEMO mode remains available because deterministic safety states may not naturally occur during the judging window. It preserves controlled `GO`, `CONDITIONAL_GO`, and `NO_GO` scenarios without needing a live failing build or security issue.
 
@@ -25,7 +25,7 @@ DEMO mode remains available because deterministic safety states may not naturall
 
 Through the same fixed 11-tool catalog, an agent can operate against the currently active mode and selected public repository source. There are no provider-specific WebMCP tools.
 
-- discover releases
+- discover open release candidates, with release/tag fallback
 - inspect CI evidence and provenance
 - inspect test evidence and explicit unavailable states
 - inspect dependency security evidence and explicit unavailable states
@@ -36,8 +36,8 @@ Through the same fixed 11-tool catalog, an agent can operate against the current
 
 Only on explicit human intent, an agent can invoke write operations to:
 
-- approve an eligible recommendation
-- reject a release
+- approve an eligible recommendation as Release Gate authorization only
+- reject a candidate
 
 ## Safety invariants
 
@@ -46,7 +46,7 @@ Only on explicit human intent, an agent can invoke write operations to:
 - Approval requires explicit human intent.
 - Approval requires `acknowledgement=true`.
 - `NO_GO` cannot be approved.
-- Unknown LIVE or DEMO release IDs return `RELEASE_NOT_FOUND`.
+- Unknown LIVE or DEMO release/candidate IDs return `RELEASE_NOT_FOUND`.
 - Missing provider evidence is never treated as `PASS`; unavailable CI/tests/security evidence uses the existing warning/`CONDITIONAL_GO` pathway.
 - Provenance links are HTTPS-only and constrained to `github.com` or `gitlab.com`.
 - Release Decision Packets preserve `SYSTEM RECOMMENDATION != HUMAN FINAL DECISION` and never represent blocked `NO_GO` approval attempts as approvals.
@@ -64,7 +64,7 @@ Only on explicit human intent, an agent can invoke write operations to:
 | E | Explicit human rejection | With explicit rejection intent, a release records a human `NO_GO` final decision while preserving the system recommendation. |
 | F | Blocked approval of `NO_GO` | Attempting to approve `2.6.0` returns `RELEASE_BLOCKED`; no approval is stored. |
 | G | Unknown release | Unknown releases return `RELEASE_NOT_FOUND` without fallback or mutation. |
-| H | Live discovery | Agent discovers and reviews the current LIVE release from real GitHub evidence. |
+| H | Live discovery | Agent discovers and reviews open LIVE PR/MR candidates from real public provider evidence, or release/tag fallback if no open candidate exists. |
 | I | Live analysis without approval | Agent analyzes the current LIVE release, explains evidence, and leaves the human final decision `PENDING`. |
 | J | Public provider switch | Human switches from a GitHub URL to a GitLab URL; the same 11 tools operate on normalized repository evidence and local decisions/activity are cleared to avoid leakage. |
 | K | Required Actions and provenance | Agent explains what must be fixed or reviewed and cites available evidence sources without using provider-specific tools. |
@@ -86,9 +86,10 @@ Verifiable work in the repository history includes:
 - polished the Release Gate user experience for hackathon presentation
 - added hybrid LIVE/DEMO evidence mode with real GitHub Actions evidence for the project itself
 - added real read-only public GitHub.com and GitLab.com repository support behind the same WebMCP capability model
+- transformed LIVE mode into pre-merge GitHub PR / GitLab MR release-candidate analysis with release/tag fallback
 - added evidence provenance, deterministic Required Actions, Release Decision Packets, and a provider-neutral Agent Playbook
 
-The WebMCP-related extension is the core of the implementation: a browser-native tool catalog for release discovery, evidence inspection with provenance, deterministic analysis with Required Actions, explicit human decision writes, final-decision reads, and audit reads. Release Gate records governance state; it does not merge code or trigger deployments.
+The WebMCP-related extension is the core of the implementation: a browser-native tool catalog for candidate discovery, evidence inspection with provenance, deterministic analysis with Required Actions, explicit human decision writes, final-decision reads, and audit reads. Release Gate records governance authorization; it does not approve PR/MR reviews, merge source code, trigger pipelines, or deploy.
 
 ## Tech stack
 

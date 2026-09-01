@@ -151,7 +151,7 @@ export const webMcpToolCatalog = [
   {
     name: "list_releases",
     description:
-      "Use to discover available releases before selecting a releaseId; returns release metadata with deterministic system recommendation and risk level.",
+      "Use to discover available release candidates before selecting a releaseId; in LIVE mode open PR/MR candidates are preferred before release/tag fallback.",
     inputSchema: emptyInputSchema,
     annotations: {
       readOnlyHint: true,
@@ -160,7 +160,7 @@ export const webMcpToolCatalog = [
   {
     name: "get_release",
     description:
-      "Use to inspect metadata for one releaseId; returns the deterministic system recommendation but not a human final decision.",
+      "Use to inspect normalized metadata for one releaseId/candidate; returns the deterministic system recommendation but not a human final decision.",
     inputSchema: releaseIdInputSchema,
     annotations: {
       readOnlyHint: true,
@@ -214,7 +214,7 @@ export const webMcpToolCatalog = [
   {
     name: "approve_release",
     description:
-      "Write operation: record explicit human approval only after the user clearly approves; requires acknowledgement=true, recalculates current evidence, and cannot override NO_GO.",
+      "Write operation: record explicit human authorization only after the user clearly approves; requires acknowledgement=true, recalculates current evidence, cannot override NO_GO, and does not merge or deploy externally.",
     inputSchema: approveReleaseInputSchema,
     annotations: {
       readOnlyHint: false,
@@ -223,7 +223,7 @@ export const webMcpToolCatalog = [
   {
     name: "reject_release",
     description:
-      "Write operation: record explicit human rejection only after the user clearly rejects a release; optional reason is stored in the audit trail.",
+      "Write operation: record explicit human rejection only after the user clearly rejects a candidate; optional reason is stored in the audit trail.",
     inputSchema: rejectReleaseInputSchema,
     annotations: {
       readOnlyHint: false,
